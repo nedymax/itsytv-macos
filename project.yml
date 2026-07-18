@@ -34,6 +34,8 @@ schemes:
       config: Debug
     test:
       config: Debug
+      targets:
+        - itsytvTests
     archive:
       config: Release
   itsytv-appstore:
@@ -79,3 +81,16 @@ targets:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: APPSTORE
     dependencies:
       - package: ItsytvCore
+
+  itsytvTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: itsytvTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.itsytv.app.tests
+        CODE_SIGNING_ALLOWED: false
+    dependencies:
+      - target: itsytv
