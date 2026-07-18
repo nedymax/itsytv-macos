@@ -3,11 +3,11 @@ import SwiftUI
 import Combine
 import ServiceManagement
 import os.log
-import ObjectiveC
 import ItsytvCore
 
 private let log = Logger(subsystem: "com.itsytv.app", category: "Panel")
 
+@MainActor
 final class AppController: NSObject, NSMenuDelegate {
 
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -19,6 +19,8 @@ final class AppController: NSObject, NSMenuDelegate {
     private var panelDeviceID: String?
     private var keyboardMonitor: Any?
     private var alwaysOnTopObserver: NSObjectProtocol?
+    private var lastAlwaysOnTopValue: Bool?
+    private var pendingOpenTimeoutWorkItem: DispatchWorkItem?
 
     init(manager: AppleTVManager, iconLoader: AppIconLoader) {
         self.manager = manager
@@ -39,6 +41,8 @@ final class AppController: NSObject, NSMenuDelegate {
         }
         observation?.cancel()
         observation = nil
+        pendingOpenTimeoutWorkItem?.cancel()
+        pendingOpenTimeoutWorkItem = nil
         HotkeyManager.shared.unregisterAll()
         panel?.close()
         panel = nil
@@ -76,10 +80,20 @@ final class AppController: NSObject, NSMenuDelegate {
 
         if let device = manager.discoveredDevices.first(where: { $0.id == targetID }) {
             log.error("openRemote: device found, connecting")
+            pendingOpenTimeoutWorkItem?.cancel()
+            pendingOpenTimeoutWorkItem = nil
             connectAndShow(device)
         } else {
             log.error("openRemote: device not discovered yet, setting pendingOpenDeviceID")
             pendingOpenDeviceID = targetID
+            pendingOpenTimeoutWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                guard self?.pendingOpenDeviceID == targetID else { return }
+                self?.pendingOpenDeviceID = nil
+                log.warning("openRemote: timed out waiting for device \(targetID, privacy: .public)")
+            }
+            pendingOpenTimeoutWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: workItem)
         }
     }
 
@@ -156,6 +170,8 @@ final class AppController: NSObject, NSMenuDelegate {
         if let pendingID = pendingOpenDeviceID,
            let device = manager.discoveredDevices.first(where: { $0.id == pendingID }) {
             pendingOpenDeviceID = nil
+            pendingOpenTimeoutWorkItem?.cancel()
+            pendingOpenTimeoutWorkItem = nil
             connectAndShow(device)
             return
         }
@@ -429,42 +445,25 @@ final class AppController: NSObject, NSMenuDelegate {
             .environment(manager)
             .environment(iconLoader)
 
-        let hostingView = ArrowCursorHostingView(rootView: panelContent)
+        let hostingView = NSHostingView(rootView: panelContent)
         hostingView.safeAreaRegions = []
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
-        // Vibrancy view as the contentView itself
-        let vibrancy = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 176, height: 400))
-        vibrancy.material = .menu
-        vibrancy.state = .active
-        vibrancy.wantsLayer = true
-        vibrancy.layer?.cornerRadius = 10
-        vibrancy.layer?.masksToBounds = true
-        vibrancy.addSubview(hostingView)
+        let surface = makePanelSurface(hostingView: hostingView)
 
-        NSLayoutConstraint.activate([
-            hostingView.topAnchor.constraint(equalTo: vibrancy.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: vibrancy.bottomAnchor),
-            hostingView.leadingAnchor.constraint(equalTo: vibrancy.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: vibrancy.trailingAnchor),
-        ])
-
+        let alwaysOnTop = UserDefaults.standard.object(forKey: "alwaysOnTop") as? Bool ?? true
         let panel = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: 176, height: 400),
-            styleMask: [.nonactivatingPanel],
+            styleMask: alwaysOnTop ? [.nonactivatingPanel] : [.borderless],
             backing: .buffered,
             defer: false
         )
-        panel.contentView = vibrancy
-        let alwaysOnTop = UserDefaults.standard.object(forKey: "alwaysOnTop") as? Bool ?? true
+        panel.contentView = surface
         panel.isFloatingPanel = alwaysOnTop
+        lastAlwaysOnTopValue = alwaysOnTop
         panel.level = alwaysOnTop ? .statusBar : .normal
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.fullScreenAuxiliary]
-        if !alwaysOnTop {
-            panel.styleMask.remove(.nonactivatingPanel)
-            panel.syncActivationBehavior()
-        }
         panel.isMovableByWindowBackground = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -478,16 +477,13 @@ final class AppController: NSObject, NSMenuDelegate {
         // Position after makeKeyAndOrderFront — AppKit constrains the
         // frame during ordering for .statusBar level panels, so we must
         // set the origin after the window is on screen.
-        if let origin = savedPanelOrigin(panelHeight: panel.frame.height), isPointOnScreen(origin, panelSize: panel.frame.size) {
-            log.info("showPanel: using saved origin (\(origin.x), \(origin.y))")
+        if let origin = PanelPositioning.resolvedOrigin(
+            savedOrigin: savedPanelOrigin(panelHeight: panel.frame.height),
+            panelSize: panel.frame.size,
+            visibleFrames: NSScreen.screens.map(\.visibleFrame),
+            statusItemFrame: statusItem.button?.window?.frame
+        ) {
             panel.setFrameOrigin(origin)
-        } else if let buttonFrame = statusItem.button?.window?.frame {
-            let x = buttonFrame.midX - 88
-            let y = buttonFrame.minY - panel.frame.height
-            log.info("showPanel: using status bar fallback (\(x), \(y))")
-            panel.setFrameOrigin(NSPoint(x: x, y: y))
-        } else {
-            log.warning("showPanel: no saved origin and no status bar button frame")
         }
 
         self.panel = panel
@@ -502,19 +498,46 @@ final class AppController: NSObject, NSMenuDelegate {
         ) { [weak self] _ in
             guard let self, let panel = self.panel else { return }
             let onTop = UserDefaults.standard.object(forKey: "alwaysOnTop") as? Bool ?? true
+            guard onTop != self.lastAlwaysOnTopValue else { return }
+            self.lastAlwaysOnTopValue = onTop
             panel.isFloatingPanel = onTop
             panel.level = onTop ? .statusBar : .normal
-            if onTop {
-                panel.styleMask.insert(.nonactivatingPanel)
-            } else {
-                panel.styleMask.remove(.nonactivatingPanel)
-            }
-            panel.syncActivationBehavior()
-            if !onTop {
-                NSApp.activate(ignoringOtherApps: true)
-                panel.makeKeyAndOrderFront(nil)
-            }
+            panel.styleMask = onTop ? [.nonactivatingPanel] : [.borderless]
+            panel.orderOut(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
         }
+    }
+
+    private func makePanelSurface(hostingView: NSView) -> NSView {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            hostingView.translatesAutoresizingMaskIntoConstraints = true
+            hostingView.frame = NSRect(x: 0, y: 0, width: 176, height: 400)
+            hostingView.autoresizingMask = [.width, .height]
+            let glass = NSGlassEffectView(frame: hostingView.frame)
+            glass.style = .regular
+            glass.cornerRadius = 10
+            glass.contentView = hostingView
+            return glass
+        }
+        #endif
+
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        let vibrancy = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 176, height: 400))
+        vibrancy.material = .menu
+        vibrancy.state = .active
+        vibrancy.wantsLayer = true
+        vibrancy.layer?.cornerRadius = 10
+        vibrancy.layer?.masksToBounds = true
+        vibrancy.addSubview(hostingView)
+        NSLayoutConstraint.activate([
+            hostingView.topAnchor.constraint(equalTo: vibrancy.topAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: vibrancy.bottomAnchor),
+            hostingView.leadingAnchor.constraint(equalTo: vibrancy.leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: vibrancy.trailingAnchor),
+        ])
+        return vibrancy
     }
 
     private func dismissPanel() {
@@ -527,6 +550,7 @@ final class AppController: NSObject, NSMenuDelegate {
         panel?.close()
         panel = nil
         panelDeviceID = nil
+        lastAlwaysOnTopValue = nil
     }
 
     private func savePanelPosition() {
@@ -566,17 +590,16 @@ final class AppController: NSObject, NSMenuDelegate {
         return origin
     }
 
-    private func isPointOnScreen(_ origin: NSPoint, panelSize: NSSize) -> Bool {
-        let panelRect = NSRect(origin: origin, size: panelSize)
-        let onScreen = NSScreen.screens.contains { $0.visibleFrame.intersects(panelRect) }
-        log.info("onScreen check: (\(origin.x), \(origin.y)) size \(panelSize.width)x\(panelSize.height) → \(onScreen)")
-        return onScreen
-    }
-
     private func installKeyboardMonitor() {
         removeKeyboardMonitor()
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.panel?.isVisible == true else { return event }
+            guard let self, let panel = self.panel,
+                  PanelKeyboardRouting.shouldHandle(
+                    panelIsVisible: panel.isVisible,
+                    panelIsKey: panel.isKeyWindow,
+                    panelIsApplicationKeyWindow: NSApp.keyWindow === panel,
+                    eventTargetsPanel: event.window === panel
+                  ) else { return event }
             if self.handleRemoteKeyDown(event) { return nil }
             return event
         }
@@ -593,9 +616,6 @@ final class AppController: NSObject, NSMenuDelegate {
         // Cmd shortcuts work even when text input is focused
         if event.modifierFlags.contains(.command) {
             switch event.keyCode {
-            case 13, 4: // Cmd+W, Cmd+H
-                manager.disconnect()
-                return true
             case 40: // Cmd+K
                 manager.keyboardToggleCounter &+= 1
                 manager.triggerKeyboardBlink(.siri)
@@ -665,38 +685,92 @@ final class AppController: NSObject, NSMenuDelegate {
 
 // MARK: - Panel SwiftUI content
 
+private final class ClosureMenuItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(title: String, action handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(invoke), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError() }
+
+    @objc private func invoke() {
+        handler()
+    }
+}
+
+/// Used only for unpaired devices because native menu-item actions close the
+/// menu before the inline pairing flow can replace it.
+private final class PersistentMenuItemView: NSView {
+    var onAction: (() -> Void)?
+    private var isHighlighted = false
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHighlighted = true
+        updateContentColors(highlighted: true)
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHighlighted = false
+        updateContentColors(highlighted: false)
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        onAction?()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard isHighlighted else { return }
+        NSColor.selectedContentBackgroundColor.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 1), xRadius: 5, yRadius: 5).fill()
+    }
+
+    private func updateContentColors(highlighted: Bool) {
+        for subview in subviews {
+            (subview as? NSTextField)?.textColor = highlighted ? .selectedMenuItemTextColor : .labelColor
+            (subview as? NSImageView)?.contentTintColor = highlighted ? .selectedMenuItemTextColor : .secondaryLabelColor
+        }
+    }
+}
+
 // MARK: - Key-capable panel
 
 private final class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
-}
 
-extension NSPanel {
-    /// Sync the WindowServer activation tag after changing `.nonactivatingPanel`.
-    /// AppKit bug: toggling the style mask flag alone does not update the
-    /// underlying `kCGSPreventsActivationTagBit` tag (FB16484811).
-    func syncActivationBehavior() {
-        #if !APPSTORE
-        let prevents = styleMask.contains(.nonactivatingPanel)
-        let sel = Selector(("_setPreventsActivation:"))
-        guard let method = class_getMethodImplementation(type(of: self), sel) else { return }
-        typealias Fn = @convention(c) (AnyObject, Selector, ObjCBool) -> Void
-        let fn = unsafeBitCast(method, to: Fn.self)
-        fn(self, sel, ObjCBool(prevents))
-        #endif
-    }
-}
-
-// MARK: - Arrow cursor hosting view
-
-private final class ArrowCursorHostingView<Content: View>: NSHostingView<Content> {
-    override func resetCursorRects() {
-        discardCursorRects()
-        addCursorRect(bounds, cursor: .arrow)
-    }
-
-    override func addCursorRect(_ rect: NSRect, cursor: NSCursor) {
-        super.addCursorRect(rect, cursor: .arrow)
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else {
+            return super.performKeyEquivalent(with: event)
+        }
+        switch event.charactersIgnoringModifiers {
+        case "w":
+            performClose(nil)
+            return true
+        case "h":
+            NSApp.hide(nil)
+            return true
+        default:
+            return super.performKeyEquivalent(with: event)
+        }
     }
 }
 
