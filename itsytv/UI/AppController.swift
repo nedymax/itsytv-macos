@@ -108,10 +108,12 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func setupStatusItem() {
         if let button = statusItem.button {
-            if let icon = Bundle.main.image(forResource: "MenuBarIcon") {
+            let configuration = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+            if let icon = NSImage(systemSymbolName: "appletvremote.gen4.fill", accessibilityDescription: "ItsyTV")
+                ?? NSImage(systemSymbolName: "appletvremote.gen4", accessibilityDescription: "ItsyTV")
+                ?? NSImage(systemSymbolName: "appletv.fill", accessibilityDescription: "ItsyTV") {
                 icon.isTemplate = true
-                icon.size = NSSize(width: 18, height: 18)
-                button.image = icon
+                button.image = icon.withSymbolConfiguration(configuration)
             }
             // Handle clicks ourselves instead of attaching the menu permanently:
             // a left-click while the remote is closed jumps straight to the last
@@ -301,141 +303,95 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func createDeviceItem(device: AppleTVDevice, isPaired: Bool) -> NSMenuItem {
-        let height = DS.ControlSize.menuItemHeight
-        let width = DS.ControlSize.menuItemWidth
-
-        let containerView = HighlightingMenuItemView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        containerView.closesMenuOnAction = isPaired
-
-        // Icon (green for paired devices)
-        let iconSize = DS.ControlSize.iconMedium
-        let iconY = (height - iconSize) / 2
-        let iconView = NSImageView(frame: NSRect(x: DS.Spacing.md, y: iconY, width: iconSize, height: iconSize))
-        iconView.image = NSImage(systemSymbolName: "appletv.fill", accessibilityDescription: nil)
-        iconView.contentTintColor = isPaired ? .systemGreen : DS.Colors.iconForeground
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        containerView.addSubview(iconView)
-
-        // Hotkey (right-aligned, for paired devices with assigned hotkey)
-        let rightPadding: CGFloat = 20
-        var labelRightEdge = width - rightPadding
-        if isPaired, let keys = HotkeyStorage.load(deviceID: device.id) {
-            let hotkeyFont = NSFont.menuFont(ofSize: 13)
-            let hotkeyStr = keys.displayString
-            let hotkeyAttr = NSAttributedString(string: hotkeyStr, attributes: [.font: hotkeyFont])
-            let hotkeyTextSize = hotkeyAttr.size()
-            let hotkeyW = ceil(hotkeyTextSize.width) + 4
-            let hotkeyX = width - rightPadding - hotkeyW
-            let hotkeyY = (height - hotkeyTextSize.height) / 2
-
-            let hotkeyLabel = NSTextField(labelWithString: hotkeyStr)
-            hotkeyLabel.frame = NSRect(x: hotkeyX, y: hotkeyY, width: hotkeyW, height: hotkeyTextSize.height)
-            hotkeyLabel.font = hotkeyFont
-            hotkeyLabel.textColor = .tertiaryLabelColor
-            containerView.addSubview(hotkeyLabel)
-            labelRightEdge = hotkeyX - DS.Spacing.sm
+        if !isPaired {
+            return createUnpairedDeviceItem(device)
         }
 
-        // Name label
-        let labelX = DS.Spacing.md + iconSize + DS.Spacing.sm
-        let labelY = (height - 17) / 2
-        let labelWidth = labelRightEdge - labelX
-        let nameLabel = NSTextField(labelWithString: device.name)
-        nameLabel.frame = NSRect(x: labelX, y: labelY, width: labelWidth, height: 17)
-        nameLabel.font = DS.Typography.label
-        nameLabel.textColor = DS.Colors.foreground
-        nameLabel.lineBreakMode = .byTruncatingTail
-        containerView.addSubview(nameLabel)
-
-        containerView.onAction = { [weak self] in
+        let item = ClosureMenuItem(title: device.name) { [weak self] in
             self?.openRemote(for: device.id)
         }
+        let symbol = NSImage(systemSymbolName: "appletv.fill", accessibilityDescription: device.name)
+        let configuration = NSImage.SymbolConfiguration(paletteColors: [.controlAccentColor])
+        item.image = symbol?.withSymbolConfiguration(configuration)
+        item.image?.isTemplate = false
+
+        if let keys = HotkeyStorage.load(deviceID: device.id) {
+            if let registrationError = HotkeyManager.shared.registrationFailures[device.id] {
+                let title = NSMutableAttributedString(string: device.name)
+                title.append(NSAttributedString(
+                    string: "  Shortcut inactive",
+                    attributes: [.foregroundColor: NSColor.systemRed, .font: NSFont.menuFont(ofSize: 11)]
+                ))
+                item.attributedTitle = title
+                item.toolTip = registrationError.localizedDescription
+            } else if let keyEquivalent = keys.menuKeyEquivalent {
+                item.keyEquivalent = keyEquivalent
+                item.keyEquivalentModifierMask = keys.menuModifierFlags
+            }
+        }
+        return item
+    }
+
+    private func createUnpairedDeviceItem(_ device: AppleTVDevice) -> NSMenuItem {
+        let view = PersistentMenuItemView(frame: NSRect(
+            x: 0,
+            y: 0,
+            width: DS.ControlSize.menuItemWidth,
+            height: DS.ControlSize.menuItemHeight
+        ))
+        view.setAccessibilityLabel(device.name)
+        view.setAccessibilityRole(.button)
+
+        let iconSize = DS.ControlSize.iconMedium
+        let icon = NSImageView(frame: NSRect(
+            x: DS.Spacing.md,
+            y: (view.bounds.height - iconSize) / 2,
+            width: iconSize,
+            height: iconSize
+        ))
+        icon.image = NSImage(systemSymbolName: "appletv.fill", accessibilityDescription: device.name)
+        icon.contentTintColor = .secondaryLabelColor
+        view.addSubview(icon)
+
+        let label = NSTextField(labelWithString: device.name)
+        label.font = .menuFont(ofSize: 0)
+        label.textColor = .labelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.frame = NSRect(
+            x: DS.Spacing.md + iconSize + DS.Spacing.sm,
+            y: (view.bounds.height - 17) / 2,
+            width: view.bounds.width - DS.Spacing.md * 2 - iconSize - DS.Spacing.sm,
+            height: 17
+        )
+        view.addSubview(label)
+        view.onAction = { [weak self] in self?.openRemote(for: device.id) }
 
         let item = NSMenuItem(title: device.name, action: nil, keyEquivalent: "")
-        item.view = containerView
+        item.view = view
         return item
     }
 
     private func createActionItem(title: String, symbolName: String? = nil, action: @escaping () -> Void) -> NSMenuItem {
-        let height = DS.ControlSize.menuItemHeight
-        let width = DS.ControlSize.menuItemWidth
-
-        let containerView = HighlightingMenuItemView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-
-        var labelX = DS.Spacing.md
+        let item = ClosureMenuItem(title: title, action: action)
         if let symbolName {
-            let iconSize = DS.ControlSize.iconMedium
-            let iconY = (height - iconSize) / 2
-            let iconView = NSImageView(frame: NSRect(x: DS.Spacing.md, y: iconY, width: iconSize, height: iconSize))
-            iconView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
-            iconView.contentTintColor = DS.Colors.iconForeground
-            iconView.imageScaling = .scaleProportionallyUpOrDown
-            containerView.addSubview(iconView)
-            labelX = DS.Spacing.md + iconSize + DS.Spacing.sm
+            item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
         }
-
-        let labelY = (height - 17) / 2
-        let labelWidth = width - labelX - DS.Spacing.md
-        let nameLabel = NSTextField(labelWithString: title)
-        nameLabel.frame = NSRect(x: labelX, y: labelY, width: labelWidth, height: 17)
-        nameLabel.font = DS.Typography.label
-        nameLabel.textColor = DS.Colors.foreground
-        nameLabel.lineBreakMode = .byTruncatingTail
-        containerView.addSubview(nameLabel)
-
-        containerView.onAction = action
-
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.view = containerView
         return item
     }
 
     private func createCheckboxItem(title: String, isOn: Bool, action: @escaping () -> Void) -> NSMenuItem {
-        let height = DS.ControlSize.menuItemHeight
-        let width = DS.ControlSize.menuItemWidth
-
-        let containerView = HighlightingMenuItemView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-
-        let iconSize = DS.ControlSize.iconMedium
-        let checkX = DS.Spacing.md
-        let checkY = (height - iconSize) / 2
-        let checkmark = NSTextField(labelWithString: isOn ? "✓" : "")
-        checkmark.frame = NSRect(x: checkX, y: checkY, width: iconSize, height: iconSize)
-        checkmark.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        checkmark.textColor = DS.Colors.foreground
-        checkmark.alignment = .center
-        containerView.addSubview(checkmark)
-
-        let labelX = DS.Spacing.md + iconSize + DS.Spacing.sm
-        let labelY = (height - 17) / 2
-        let labelWidth = width - labelX - DS.Spacing.md
-        let nameLabel = NSTextField(labelWithString: title)
-        nameLabel.frame = NSRect(x: labelX, y: labelY, width: labelWidth, height: 17)
-        nameLabel.font = DS.Typography.label
-        nameLabel.textColor = DS.Colors.foreground
-        nameLabel.lineBreakMode = .byTruncatingTail
-        containerView.addSubview(nameLabel)
-
-        containerView.onAction = action
-
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.view = containerView
+        let item = ClosureMenuItem(title: title, action: action)
+        item.state = isOn ? .on : .off
         return item
     }
 
     private func createItsyhomePromoItem() -> NSMenuItem {
-        let width = DS.ControlSize.menuItemWidth
-        let height: CGFloat = 64
-
-        let containerView = ItsyhomePromoView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        containerView.onAction = {
+        let item = ClosureMenuItem(title: "Try Itsyhome", action: {
             if let url = URL(string: "macappstore://apps.apple.com/app/itsyhome/id6758070650") {
                 NSWorkspace.shared.open(url)
             }
-        }
-
-        let item = NSMenuItem(title: "Itsyhome", action: nil, keyEquivalent: "")
-        item.view = containerView
+        })
+        item.image = NSImage(systemSymbolName: "house.fill", accessibilityDescription: "Try Itsyhome")
         return item
     }
 
@@ -809,7 +765,7 @@ struct PanelMenuButton: View {
             ZStack {
                 Circle()
                     .fill(Color.secondary.opacity(0.15))
-                    .frame(width: 20, height: 20)
+                    .frame(width: 28, height: 28)
                 Image(systemName: "ellipsis")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
@@ -819,6 +775,8 @@ struct PanelMenuButton: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .help("Remote options")
+        .accessibilityLabel("Remote options")
         .popover(isPresented: $showingHotkeyRecorder) {
             ShortcutRecorderView(deviceID: deviceID) { keys in
                 currentHotkey = keys
@@ -945,7 +903,8 @@ final class ShortcutRecorderNSView: NSView {
     private func setupMonitor() {
         removeMonitor()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.isRecording else { return event }
+            guard let self, self.isRecording, let window = self.window,
+                  window.isKeyWindow, NSApp.keyWindow === window, event.window === window else { return event }
 
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
@@ -1073,7 +1032,8 @@ final class PairingMenuItem: NSMenuItem {
         let container = PairingContainerView(
             frame: NSRect(x: 0, y: 0, width: width, height: totalHeight),
             onDigit: { [weak self] digit in self?.enterDigit(digit) },
-            onBackspace: { [weak self] in self?.backspace() }
+            onBackspace: { [weak self] in self?.backspace() },
+            onCancel: { [weak self] in self?.manager.disconnect() }
         )
         containerView = container
 
@@ -1097,9 +1057,9 @@ final class PairingMenuItem: NSMenuItem {
         // Digit boxes — centered
         let digitsY = titleY - afterTitle - digitBoxSize
         let digitsX = (width - allDigitsWidth) / 2
-        let digitBoxBg = NSColor(name: nil) { $0.isDark ? NSColor(white: 0.22, alpha: 1) : NSColor(white: 0.82, alpha: 1) }
-        let digitBoxBorder = NSColor(name: nil) { $0.isDark ? NSColor(white: 0.40, alpha: 1) : NSColor(white: 0.60, alpha: 1) }
-        let digitBoxFocusBorder = NSColor(name: nil) { $0.isDark ? NSColor(white: 0.70, alpha: 1) : NSColor(white: 0.30, alpha: 1) }
+        let digitBoxBg = NSColor.controlBackgroundColor
+        let digitBoxBorder = NSColor.separatorColor
+        let digitBoxFocusBorder = NSColor.keyboardFocusIndicatorColor
 
         for i in 0..<4 {
             let boxX = digitsX + CGFloat(i) * (digitBoxSize + digitBoxSpacing)
@@ -1222,62 +1182,27 @@ private final class PairingContainerView: NSView {
     }
 }
 
-// MARK: - Close button (X)
+// MARK: - Pairing close button
 
-private final class CloseButton: NSView {
-
+private final class CloseButton: NSButton {
     var onPress: (() -> Void)?
-    private var isHovered = false
-    private var trackingArea: NSTrackingArea?
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let existing = trackingArea { removeTrackingArea(existing) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        trackingArea = area
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Cancel pairing")
+        imagePosition = .imageOnly
+        isBordered = false
+        contentTintColor = .secondaryLabelColor
+        toolTip = "Cancel pairing"
+        setAccessibilityLabel("Cancel pairing")
+        target = self
+        action = #selector(invoke)
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        isHovered = true
-        needsDisplay = true
-    }
+    required init?(coder: NSCoder) { fatalError() }
 
-    override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        needsDisplay = true
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        if bounds.contains(convert(event.locationInWindow, from: nil)) {
-            enclosingMenuItem?.menu?.cancelTracking()
-            onPress?()
-        }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        // Circle background
-        let circleBg: NSColor = isHovered
-            ? DS.Colors.muted
-            : DS.Colors.secondary
-        circleBg.setFill()
-        NSBezierPath(ovalIn: bounds).fill()
-
-        // X mark
-        let inset: CGFloat = 6
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: inset, y: inset))
-        path.line(to: NSPoint(x: bounds.width - inset, y: bounds.height - inset))
-        path.move(to: NSPoint(x: bounds.width - inset, y: inset))
-        path.line(to: NSPoint(x: inset, y: bounds.height - inset))
-        path.lineWidth = 1.5
-        path.lineCapStyle = .round
-        DS.Colors.mutedForeground.setStroke()
-        path.stroke()
+    @objc private func invoke() {
+        enclosingMenuItem?.menu?.cancelTracking()
+        onPress?()
     }
 }

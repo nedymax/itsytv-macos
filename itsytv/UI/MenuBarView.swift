@@ -62,7 +62,7 @@ struct RemoteControlView: View {
             // Controls — dimmed while connecting
             VStack(spacing: 10) {
                 // Tab picker
-                CapsuleSegmentPicker(
+                NativeSegmentPicker(
                     selection: $selectedTab,
                     options: RemoteTab.allCases.map { ($0, $0.rawValue) }
                 )
@@ -70,27 +70,19 @@ struct RemoteControlView: View {
 
                 // Keyboard text input (pushes content down when visible)
                 if showingKeyboard && selectedTab == .remote {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        ComposeAwareTextField(
-                            text: $keyboardText,
-                            placeholder: "Type to search...",
-                            onCommittedTextChange: { committed in
-                                manager.updateRemoteText(committed)
-                            },
-                            onSubmit: {
-                                keyboardText = ""
-                                showingKeyboard = false
-                                manager.resetTextInputState()
-                            }
-                        )
-                        .font(.caption)
-                    }
-                    .padding(.vertical, 5)
-                    .padding(.horizontal, 10)
-                    .background(Capsule().fill(Color(nsColor: DS.Colors.muted)))
+                    ComposeAwareTextField(
+                        text: $keyboardText,
+                        placeholder: "Type to search...",
+                        usesSearchField: true,
+                        onCommittedTextChange: { committed in
+                            manager.updateRemoteText(committed)
+                        },
+                        onSubmit: {
+                            keyboardText = ""
+                            showingKeyboard = false
+                            manager.resetTextInputState()
+                        }
+                    )
                     .padding(.horizontal, 8)
                 }
 
@@ -131,6 +123,8 @@ struct RemoteControlView: View {
                                     .background(Circle().fill(Color.secondary.opacity(0.12)))
                             }
                             .buttonStyle(.plain)
+                            .help("Show keyboard")
+                            .accessibilityLabel("Show Apple TV keyboard")
 
                             Spacer()
 
@@ -397,14 +391,14 @@ struct RemoteTabContent: View {
             VStack(spacing: buttonGap) {
                 // Row 1: Back + TV/Home
                 HStack(spacing: buttonGap) {
-                    RemoteCircleButton(imageName: "btnBack", button: .menu, shortcut: "Esc", size: buttonSize) { action in
+                    RemoteCircleButton(symbolName: "chevron.backward", accessibilityLabel: "Back", button: .menu, shortcut: "Esc", size: buttonSize) { action in
                         if action == .hold {
                             manager.pressButton(.home)
                         } else {
                             manager.pressButton(.menu, action: action)
                         }
                     }
-                    RemoteCircleButton(imageName: "btnHome", button: .home, shortcut: "⌫", size: buttonSize) { action in
+                    RemoteCircleButton(symbolName: "tv", accessibilityLabel: "TV Home", button: .home, shortcut: "⌫", size: buttonSize) { action in
                         manager.pressButton(.home, action: action)
                     }
                 }
@@ -412,15 +406,15 @@ struct RemoteTabContent: View {
                 // Rows 2-3: Play/Pause + Mute left, Volume pill right
                 HStack(alignment: .top, spacing: buttonGap) {
                     VStack(spacing: buttonGap) {
-                        RemoteCircleButton(imageName: "btnPlayPause", button: .playPause, shortcut: "Space", size: buttonSize) { action in
+                        RemoteCircleButton(symbolName: "playpause.fill", accessibilityLabel: "Play or pause", button: .playPause, shortcut: "Space", size: buttonSize) { action in
                             manager.pressButton(.playPause, action: action)
                         }
-                        RemoteCircleButton(imageName: "btnMute", button: .siri, shortcut: "⌘⇧M", size: buttonSize) { action in
+                        RemoteCircleButton(symbolName: "speaker.slash.fill", accessibilityLabel: "Mute", button: .siri, shortcut: "⌘⇧M", size: buttonSize) { action in
                             guard action == .click else { return }
                             manager.toggleMute()
                         }
                         // TODO: Keyboard button – decide on placement
-                        // RemoteCircleButton(imageName: "btnKeyboard", button: .siri, shortcut: "⌘K", size: buttonSize) { action in
+                        // RemoteCircleButton(symbolName: "keyboard", accessibilityLabel: "Keyboard", button: .siri, shortcut: "⌘K", size: buttonSize) { action in
                         //     guard action == .click else { return }
                         //     showingKeyboard.toggle()
                         //     if !showingKeyboard {
@@ -491,31 +485,13 @@ struct AppGridView: View {
         } else {
             VStack(spacing: 8) {
                 if showAppsSearch {
-                    // Search bar
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        ComposeAwareTextField(
-                            text: $searchText,
-                            placeholder: "Search apps...",
-                            onCommittedTextChange: { _ in },
-                            onSubmit: { }
-                        )
-                        if !searchText.isEmpty {
-                            Button {
-                                searchText = ""
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 5)
-                    .padding(.horizontal, 10)
-                    .background(Capsule().fill(Color(nsColor: DS.Colors.muted)))
+                    ComposeAwareTextField(
+                        text: $searchText,
+                        placeholder: "Search apps...",
+                        usesSearchField: true,
+                        onCommittedTextChange: { _ in },
+                        onSubmit: { }
+                    )
                     .padding(.horizontal, 16)
                 }
 
@@ -955,12 +931,15 @@ struct DPadDot: View {
             .frame(width: 30, height: 30)
             .overlay(RemoteButtonGesture(onInput: action))
             .help(shortcut)
+            .accessibilityElement()
+            .accessibilityLabel(Text(accessibilityLabel))
     }
 }
 
 struct RemoteCircleButton: View {
     @Environment(AppleTVManager.self) private var manager
-    let imageName: String
+    let symbolName: String
+    let accessibilityLabel: String
     let button: CompanionButton
     let shortcut: String
     let size: CGFloat
@@ -978,15 +957,17 @@ struct RemoteCircleButton: View {
     }
 
     var body: some View {
-        Image(imageName)
-            .resizable()
-            .scaledToFit()
+        Image(systemName: symbolName)
+            .font(.system(size: size * 0.28, weight: .medium))
+            .foregroundStyle(Color(nsColor: DS.Colors.remoteButtonForeground))
             .frame(width: size * 0.33, height: size * 0.33)
             .frame(width: size, height: size)
             .background(Circle().fill(Color(nsColor: DS.Colors.remoteButton)))
             .overlay(Circle().fill(.white.opacity(blinkOpacity)).allowsHitTesting(false))
             .overlay(RemoteButtonGesture { input in press(input) })
             .help(shortcut)
+            .accessibilityElement()
+            .accessibilityLabel(Text(accessibilityLabel))
             .onChange(of: manager.keyboardBlinkCounter) { _, _ in
                 if manager.keyboardBlinkButton == button { blink() }
             }
@@ -1017,6 +998,7 @@ struct VolumePill: View {
             }
             .buttonStyle(.plain)
             .help("+")
+            .accessibilityLabel("Volume up")
 
             Button(action: { blink(); onDown() }) {
                 Image(systemName: "minus")
@@ -1027,6 +1009,7 @@ struct VolumePill: View {
             }
             .buttonStyle(.plain)
             .help("−")
+            .accessibilityLabel("Volume down")
         }
         .frame(width: width, height: height)
         .background(Capsule().fill(Color(nsColor: DS.Colors.remoteButton)))
@@ -1054,7 +1037,7 @@ private struct PowerButton: View {
         Image(systemName: "power")
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.secondary)
-            .frame(width: 24, height: 24)
+            .frame(width: 28, height: 28)
             .background(Circle().fill(Color.secondary.opacity(0.12)))
             .onTapGesture {
                 guard !didLongPress else {
@@ -1067,6 +1050,10 @@ private struct PowerButton: View {
                 didLongPress = true
                 onLongPress()
             }
+            .accessibilityElement()
+            .accessibilityLabel("Power")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { onTap() }
     }
 }
 

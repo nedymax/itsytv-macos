@@ -8,11 +8,12 @@ import SwiftUI
 struct ComposeAwareTextField: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String = ""
+    var usesSearchField = false
     var onCommittedTextChange: (String) -> Void
     var onSubmit: () -> Void
 
     func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField()
+        let field: NSTextField = usesSearchField ? NSSearchField() : NSTextField()
         field.stringValue = text
         if !placeholder.isEmpty {
             field.placeholderAttributedString = NSAttributedString(
@@ -23,9 +24,11 @@ struct ComposeAwareTextField: NSViewRepresentable {
                 ]
             )
         }
-        field.isBordered = false
-        field.drawsBackground = false
-        field.focusRingType = .none
+        field.isBordered = true
+        field.isBezeled = true
+        field.drawsBackground = true
+        field.focusRingType = .default
+        field.bezelStyle = .roundedBezel
         field.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
         field.cell?.lineBreakMode = .byTruncatingTail
         field.delegate = context.coordinator

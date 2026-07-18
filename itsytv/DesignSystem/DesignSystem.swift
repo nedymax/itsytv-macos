@@ -9,51 +9,35 @@ enum DS {
 
     enum Colors {
         static var background: NSColor {
-            NSColor(name: nil) { appearance in
-                appearance.isDark ? NSColor(white: 0.145, alpha: 1) : NSColor(white: 1, alpha: 1)
-            }
+            .windowBackgroundColor
         }
 
         static var foreground: NSColor {
-            NSColor(name: nil) { appearance in
-                appearance.isDark ? NSColor(white: 0.985, alpha: 1) : NSColor(white: 0.145, alpha: 1)
-            }
+            .labelColor
         }
 
         static var primary: NSColor {
-            NSColor(name: nil) { appearance in
-                appearance.isDark ? NSColor(white: 0.985, alpha: 1) : NSColor(white: 0.205, alpha: 1)
-            }
+            .controlAccentColor
         }
 
         static var primaryForeground: NSColor {
-            NSColor(name: nil) { appearance in
-                appearance.isDark ? NSColor(white: 0.205, alpha: 1) : NSColor(white: 0.985, alpha: 1)
-            }
+            .selectedControlTextColor
         }
 
         static var secondary: NSColor {
-            NSColor(name: nil) { appearance in
-                appearance.isDark ? NSColor(white: 0.269, alpha: 1) : NSColor(white: 0.97, alpha: 1)
-            }
+            .controlBackgroundColor
         }
 
         static var secondaryForeground: NSColor {
-            NSColor(name: nil) { appearance in
-                appearance.isDark ? NSColor(white: 0.985, alpha: 1) : NSColor(white: 0.205, alpha: 1)
-            }
+            .controlTextColor
         }
 
         static var muted: NSColor {
-            NSColor(name: nil) { appearance in
-                appearance.isDark ? NSColor(white: 0.269, alpha: 1) : NSColor(white: 0.85, alpha: 1)
-            }
+            .controlBackgroundColor
         }
 
         static var mutedForeground: NSColor {
-            NSColor(name: nil) { appearance in
-                appearance.isDark ? NSColor(white: 0.708, alpha: 1) : NSColor(white: 0.556, alpha: 1)
-            }
+            .secondaryLabelColor
         }
 
         static var iconForeground: NSColor {
@@ -71,17 +55,7 @@ enum DS {
         }
 
         static var border: NSColor {
-            NSColor(name: nil) { appearance in
-                appearance.isDark ? NSColor(white: 0.269, alpha: 1) : NSColor(white: 0.922, alpha: 1)
-            }
-        }
-
-        static var promoGradientStart: NSColor {
-            NSColor(red: 0.30, green: 0.45, blue: 0.95, alpha: 1)
-        }
-
-        static var promoGradientEnd: NSColor {
-            NSColor(red: 0.65, green: 0.35, blue: 0.90, alpha: 1)
+            .separatorColor
         }
 
     }
@@ -131,55 +105,19 @@ extension NSAppearance {
     }
 }
 
-// MARK: - NSColor convenience
+// MARK: - Native segmented picker
 
-extension NSColor {
-    func resolvedColor(for appearance: NSAppearance? = nil) -> NSColor {
-        let appearance = appearance ?? NSAppearance.current ?? NSApp.effectiveAppearance
-        var resolved = self
-        appearance.performAsCurrentDrawingAppearance {
-            resolved = self.usingColorSpace(.deviceRGB) ?? self
-        }
-        return resolved
-    }
-
-    var cgColorResolved: CGColor {
-        resolvedColor().cgColor
-    }
-}
-
-// MARK: - Capsule segment picker
-
-struct CapsuleSegmentPicker<T: Hashable>: View {
+struct NativeSegmentPicker<T: Hashable>: View {
     @Binding var selection: T
     let options: [(T, String)]
 
     var body: some View {
-        HStack(spacing: 2) {
+        Picker("View", selection: $selection) {
             ForEach(0..<options.count, id: \.self) { index in
-                let value = options[index].0
-                let label = options[index].1
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        selection = value
-                    }
-                } label: {
-                    Text(label)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(
-                            Capsule()
-                                .fill(selection == value ? Color(nsColor: DS.Colors.primary) : .clear)
-                        )
-                        .contentShape(Capsule())
-                        .foregroundStyle(selection == value ? Color(nsColor: DS.Colors.primaryForeground) : .secondary)
-                }
-                .buttonStyle(.plain)
+                Text(options[index].1).tag(options[index].0)
             }
         }
-        .padding(3)
-        .background(Capsule().fill(Color(nsColor: DS.Colors.muted)))
+        .pickerStyle(.segmented)
+        .labelsHidden()
     }
 }
