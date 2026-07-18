@@ -92,5 +92,7 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         PRODUCT_BUNDLE_IDENTIFIER: com.itsytv.app.tests
         CODE_SIGNING_ALLOWED: false
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Itsytv.app/Contents/MacOS/Itsytv"
+        BUNDLE_LOADER: "$(TEST_HOST)"
     dependencies:
       - target: itsytv
