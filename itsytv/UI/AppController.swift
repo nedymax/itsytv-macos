@@ -160,7 +160,9 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private var lastKnownStatus: ConnectionStatus = .disconnected
     private var lastKnownDeviceCount: Int = 0
-    private var hasPairedDevice = false
+    private var hasPairedDevice: Bool {
+        manager.discoveredDevices.contains { KeychainStorage.load(for: $0.id) != nil }
+    }
 
     private func handleStateChange() {
         let currentStatus = manager.connectionStatus
@@ -262,6 +264,11 @@ final class AppController: NSObject, NSMenuDelegate {
                     }
                 } catch {
                     log.error("Failed to toggle login item: \(error.localizedDescription)")
+                    let alert = NSAlert()
+                    alert.messageText = "Could not update Launch at Login"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                    alert.runModal()
                 }
             }
             menu.addItem(loginItem)
@@ -279,7 +286,6 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func buildDeviceList() {
-        hasPairedDevice = false
         if manager.discoveredDevices.isEmpty {
             let scanning = NSMenuItem(title: "Scanning for devices...", action: nil, keyEquivalent: "")
             scanning.isEnabled = false
@@ -288,7 +294,6 @@ final class AppController: NSObject, NSMenuDelegate {
             let sorted = manager.discoveredDevices.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             for device in sorted {
                 let isPaired = KeychainStorage.load(for: device.id) != nil
-                if isPaired { hasPairedDevice = true }
                 let item = createDeviceItem(device: device, isPaired: isPaired)
                 menu.addItem(item)
             }
@@ -791,6 +796,7 @@ struct PanelMenuButton: View {
             Button(hotkeyButtonTitle) {
                 showingHotkeyRecorder = true
             }
+            .disabled(deviceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             if currentHotkey != nil {
                 Button("Remove hotkey", role: .destructive) {
                     HotkeyStorage.save(deviceID: deviceID, keys: nil)
@@ -837,6 +843,7 @@ struct ShortcutRecorderView: View {
     let onRecorded: (ShortcutKeys?) -> Void
     @State private var isRecording = false
     @State private var recordedKeys: ShortcutKeys?
+    @State private var errorMessage: String?
 
     var body: some View {
         VStack(spacing: 12) {
@@ -853,6 +860,14 @@ struct ShortcutRecorderView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Shortcut error: \(errorMessage)")
+            }
+
             HStack(spacing: 12) {
                 Button("Cancel") {
                     onRecorded(HotkeyStorage.load(deviceID: deviceID))
@@ -861,16 +876,21 @@ struct ShortcutRecorderView: View {
 
                 Button("Save") {
                     if let keys = recordedKeys {
-                        HotkeyStorage.save(deviceID: deviceID, keys: keys)
+                        switch HotkeyStorage.save(deviceID: deviceID, keys: keys) {
+                        case .success:
+                            errorMessage = nil
+                            onRecorded(keys)
+                        case .failure(let error):
+                            errorMessage = error.localizedDescription
+                        }
                     }
-                    onRecorded(recordedKeys)
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(recordedKeys == nil)
             }
         }
         .padding(20)
-        .frame(width: 220)
+        .frame(minWidth: 220, idealWidth: 240)
         .background(ShortcutRecorderHelper(isRecording: $isRecording, recordedKeys: $recordedKeys))
         .onAppear {
             isRecording = true
@@ -965,13 +985,15 @@ struct PanelCloseButton: View {
             ZStack {
                 Circle()
                     .fill(Color.secondary.opacity(0.15))
-                    .frame(width: 20, height: 20)
+                    .frame(width: 28, height: 28)
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
             }
         }
         .buttonStyle(.plain)
+        .help("Close remote")
+        .accessibilityLabel("Close remote")
     }
 }
 
@@ -1155,96 +1177,20 @@ private final class DigitBoxView: NSView {
     }
 }
 
-// MARK: - Itsyhome promo banner
-
-private final class ItsyhomePromoView: HighlightingMenuItemView {
-
-    private var isHovered = false
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        onMouseEnter = { [weak self] in self?.isHovered = true }
-        onMouseExit = { [weak self] in self?.isHovered = false }
-        setupContent()
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    private func setupContent() {
-        let width = bounds.width
-        let height = bounds.height
-        let insetX: CGFloat = 4
-        let insetRect = NSRect(x: insetX, y: 0, width: width - insetX * 2, height: height)
-
-        // Icon
-        let iconSize: CGFloat = 32
-        let iconX = insetRect.minX + DS.Spacing.md
-        let iconY = (height - iconSize) / 2
-        let iconView = NSImageView(frame: NSRect(x: iconX, y: iconY, width: iconSize, height: iconSize))
-        iconView.image = Bundle.main.image(forResource: "itsyhome-icon")
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.wantsLayer = true
-        iconView.layer?.cornerRadius = 6
-        iconView.layer?.masksToBounds = true
-        addSubview(iconView)
-
-        // Title
-        let textX = iconX + iconSize + DS.Spacing.sm
-        let chevronSize: CGFloat = 10
-        let textMaxWidth = insetRect.maxX - textX - DS.Spacing.md - chevronSize - DS.Spacing.xs
-        let titleLabel = NSTextField(labelWithString: "HomeKit in menu bar")
-        titleLabel.frame = NSRect(x: textX, y: height / 2 + 1, width: textMaxWidth, height: 17)
-        titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .bold)
-        titleLabel.textColor = .white
-        titleLabel.lineBreakMode = .byTruncatingTail
-        addSubview(titleLabel)
-
-        // Subtitle
-        let subtitleLabel = NSTextField(labelWithString: "Try Itsyhome – it's free")
-        subtitleLabel.frame = NSRect(x: textX, y: height / 2 - 16, width: textMaxWidth, height: 15)
-        subtitleLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
-        subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.75)
-        subtitleLabel.lineBreakMode = .byTruncatingTail
-        addSubview(subtitleLabel)
-
-        // Chevron
-        let chevronX = insetRect.maxX - DS.Spacing.md - chevronSize
-        let chevronY = (height - chevronSize) / 2
-        let chevronView = NSImageView(frame: NSRect(x: chevronX, y: chevronY, width: chevronSize, height: chevronSize))
-        chevronView.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
-        chevronView.contentTintColor = NSColor.white.withAlphaComponent(0.75)
-        chevronView.imageScaling = .scaleProportionallyUpOrDown
-        addSubview(chevronView)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let insetRect = bounds.insetBy(dx: 4, dy: 0)
-
-        if isHovered {
-            NSColor.selectedContentBackgroundColor.setFill()
-            NSBezierPath(roundedRect: insetRect, xRadius: 4, yRadius: 4).fill()
-        } else {
-            let gradient = NSGradient(
-                starting: DS.Colors.promoGradientStart,
-                ending: DS.Colors.promoGradientEnd
-            )
-            gradient?.draw(in: NSBezierPath(roundedRect: insetRect, xRadius: 6, yRadius: 6), angle: 0)
-        }
-    }
-}
-
 // MARK: - Pairing container (captures keyboard)
 
 private final class PairingContainerView: NSView {
 
     var onDigit: ((Int) -> Void)?
     var onBackspace: (() -> Void)?
+    var onCancel: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
 
-    init(frame: NSRect, onDigit: @escaping (Int) -> Void, onBackspace: @escaping () -> Void) {
+    init(frame: NSRect, onDigit: @escaping (Int) -> Void, onBackspace: @escaping () -> Void, onCancel: @escaping () -> Void) {
         self.onDigit = onDigit
         self.onBackspace = onBackspace
+        self.onCancel = onCancel
         super.init(frame: frame)
     }
 
@@ -1260,6 +1206,11 @@ private final class PairingContainerView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 {
+            enclosingMenuItem?.menu?.cancelTracking()
+            onCancel?()
+            return
+        }
         guard let chars = event.characters else { return }
         for ch in chars {
             if let digit = ch.wholeNumberValue {

@@ -16,6 +16,29 @@ struct ShortcutKeys: Codable, Equatable {
         return result
     }
 
+    var menuKeyEquivalent: String? {
+        switch Int(keyCode) {
+        case kVK_Return: return "\r"
+        case kVK_Tab: return "\t"
+        case kVK_Space: return " "
+        case kVK_Delete: return "\u{7f}"
+        case kVK_Escape: return "\u{1b}"
+        case kVK_UpArrow: return String(UnicodeScalar(NSUpArrowFunctionKey)!)
+        case kVK_DownArrow: return String(UnicodeScalar(NSDownArrowFunctionKey)!)
+        case kVK_LeftArrow: return String(UnicodeScalar(NSLeftArrowFunctionKey)!)
+        case kVK_RightArrow: return String(UnicodeScalar(NSRightArrowFunctionKey)!)
+        default: return keyCodeToCharacter(keyCode)?.lowercased()
+        }
+    }
+
+    var menuModifierFlags: NSEvent.ModifierFlags {
+        NSEvent.ModifierFlags(rawValue: modifiers).intersection(.deviceIndependentFlagsMask)
+    }
+
+    var isReservedMacShortcut: Bool {
+        menuModifierFlags == .command && (keyCode == UInt16(kVK_ANSI_W) || keyCode == UInt16(kVK_ANSI_H))
+    }
+
     private func keyCodeToString(_ keyCode: UInt16) -> String {
         switch Int(keyCode) {
         case kVK_Return: return "↩"
@@ -80,12 +103,33 @@ struct ShortcutKeys: Codable, Equatable {
     }
 }
 
+enum HotkeyRegistrationError: LocalizedError, Equatable {
+    case invalidDeviceID
+    case reservedMacShortcut
+    case registrationFailed(OSStatus)
+    case storageFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidDeviceID:
+            return "Select a valid Apple TV before assigning a shortcut."
+        case .reservedMacShortcut:
+            return "⌘W and ⌘H keep their standard macOS behavior and cannot be assigned."
+        case .registrationFailed(let status):
+            return "macOS could not register this shortcut (error \(status)). It may already be in use."
+        case .storageFailed:
+            return "The shortcut could not be saved."
+        }
+    }
+}
+
 final class HotkeyManager {
     static let shared = HotkeyManager()
 
     private var hotkeys: [UInt32: (id: EventHotKeyID, ref: EventHotKeyRef?, deviceID: String)] = [:]
     private var nextId: UInt32 = 1
     var onHotkeyPressed: ((String) -> Void)?
+    private(set) var registrationFailures: [String: HotkeyRegistrationError] = [:]
 
     private init() {
         installCarbonHandler()
@@ -127,8 +171,16 @@ final class HotkeyManager {
         }
     }
 
-    func register(deviceID: String, keys: ShortcutKeys) {
-        unregister(deviceID: deviceID)
+    @discardableResult
+    func register(deviceID: String, keys: ShortcutKeys) -> Result<Void, HotkeyRegistrationError> {
+        guard HotkeyStorage.isValidDeviceID(deviceID) else {
+            registrationFailures[deviceID] = .invalidDeviceID
+            return .failure(.invalidDeviceID)
+        }
+        guard !keys.isReservedMacShortcut else {
+            registrationFailures[deviceID] = .reservedMacShortcut
+            return .failure(.reservedMacShortcut)
+        }
 
         let id = nextId
         nextId += 1
@@ -149,15 +201,22 @@ final class HotkeyManager {
 
         if status == noErr {
             hotkeys[id] = (hotkeyID, hotkeyRef, deviceID)
+            registrationFailures.removeValue(forKey: deviceID)
+            return .success(())
         }
+        let error = HotkeyRegistrationError.registrationFailed(status)
+        registrationFailures[deviceID] = error
+        return .failure(error)
     }
 
     func unregister(deviceID: String) {
-        for (id, entry) in hotkeys where entry.deviceID == deviceID {
+        registrationFailures.removeValue(forKey: deviceID)
+        let matchingIDs = hotkeys.compactMap { id, entry in entry.deviceID == deviceID ? id : nil }
+        for id in matchingIDs {
+            guard let entry = hotkeys.removeValue(forKey: id) else { continue }
             if let ref = entry.ref {
                 UnregisterEventHotKey(ref)
             }
-            hotkeys.removeValue(forKey: id)
         }
     }
 
@@ -168,6 +227,7 @@ final class HotkeyManager {
             }
         }
         hotkeys.removeAll()
+        registrationFailures.removeAll()
         nextId = 1
     }
 
@@ -176,7 +236,7 @@ final class HotkeyManager {
 
         // Re-register from storage
         for (deviceID, keys) in HotkeyStorage.loadAll() {
-            register(deviceID: deviceID, keys: keys)
+            _ = register(deviceID: deviceID, keys: keys)
         }
     }
 
@@ -193,17 +253,41 @@ final class HotkeyManager {
 enum HotkeyStorage {
     private static let storageKey = "deviceHotkeys"
 
-    static func save(deviceID: String, keys: ShortcutKeys?) {
+    @discardableResult
+    static func save(deviceID: String, keys: ShortcutKeys?) -> Result<Void, HotkeyRegistrationError> {
+        guard isValidDeviceID(deviceID) else {
+            return .failure(.invalidDeviceID)
+        }
+
         var all = loadAll()
+        let previous = all[deviceID]
+
         if let keys {
+            HotkeyManager.shared.unregister(deviceID: deviceID)
+            switch HotkeyManager.shared.register(deviceID: deviceID, keys: keys) {
+            case .success:
+                break
+            case .failure(let error):
+                if let previous {
+                    _ = HotkeyManager.shared.register(deviceID: deviceID, keys: previous)
+                }
+                return .failure(error)
+            }
             all[deviceID] = keys
         } else {
+            HotkeyManager.shared.unregister(deviceID: deviceID)
             all.removeValue(forKey: deviceID)
         }
-        if let data = try? JSONEncoder().encode(all) {
-            UserDefaults.standard.set(data, forKey: storageKey)
+
+        guard let data = try? JSONEncoder().encode(all) else {
+            HotkeyManager.shared.unregister(deviceID: deviceID)
+            if let previous {
+                _ = HotkeyManager.shared.register(deviceID: deviceID, keys: previous)
+            }
+            return .failure(.storageFailed)
         }
-        HotkeyManager.shared.reregisterAll()
+        UserDefaults.standard.set(data, forKey: storageKey)
+        return .success(())
     }
 
     static func load(deviceID: String) -> ShortcutKeys? {
@@ -215,6 +299,10 @@ enum HotkeyStorage {
               let all = try? JSONDecoder().decode([String: ShortcutKeys].self, from: data) else {
             return [:]
         }
-        return all
+        return all.filter { isValidDeviceID($0.key) }
+    }
+
+    static func isValidDeviceID(_ deviceID: String) -> Bool {
+        !deviceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import ServiceManagement
 import ItsytvCore
 
 enum RemoteTab: String, CaseIterable {
@@ -286,6 +287,7 @@ struct NowPlayingProgress: View {
     @State private var seekTime: TimeInterval = 0
     /// After seeking, hold the seeked position until the server catches up.
     @State private var pendingSeekTarget: TimeInterval?
+    @State private var pendingSeekDeadline: Date?
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var displayTime: TimeInterval {
@@ -329,11 +331,12 @@ struct NowPlayingProgress: View {
                             onSeek?(position)
                             currentTime = position
                             pendingSeekTarget = position
+                            pendingSeekDeadline = Date().addingTimeInterval(5)
                             isSeeking = false
                         }
                 )
             }
-            .frame(height: 12)
+            .frame(height: 20)
 
             HStack {
                 Text(formatTime(displayTime))
@@ -354,6 +357,11 @@ struct NowPlayingProgress: View {
                     // Clear hold once the server reports a position near the seek target
                     if abs(serverTime - target) < 3 {
                         pendingSeekTarget = nil
+                        pendingSeekDeadline = nil
+                        currentTime = serverTime
+                    } else if let deadline = pendingSeekDeadline, Date() >= deadline {
+                        pendingSeekTarget = nil
+                        pendingSeekDeadline = nil
                         currentTime = serverTime
                     }
                 } else {
@@ -667,6 +675,12 @@ struct AppleAppButton: View {
 
 // MARK: - Native gesture handler (no 300ms SwiftUI tap disambiguation delay)
 
+enum RemoteButtonTracking {
+    static func shouldFireClick(holdFired: Bool, releasedInside: Bool) -> Bool {
+        !holdFired && releasedInside
+    }
+}
+
 private struct RemoteButtonGesture: NSViewRepresentable {
     let onInput: (InputAction) -> Void
 
@@ -701,8 +715,24 @@ private class RemoteButtonGestureNSView: NSView {
     override func mouseUp(with event: NSEvent) {
         holdTimer?.invalidate()
         holdTimer = nil
-        guard !holdFired else { return }
+        let releasedInside = bounds.contains(convert(event.locationInWindow, from: nil))
+        guard RemoteButtonTracking.shouldFireClick(holdFired: holdFired, releasedInside: releasedInside) else { return }
         onInput?(.click)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if !bounds.contains(convert(event.locationInWindow, from: nil)) {
+            holdTimer?.invalidate()
+            holdTimer = nil
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            holdTimer?.invalidate()
+            holdTimer = nil
+        }
     }
 }
 
@@ -872,20 +902,22 @@ struct DPadView: View {
                 .frame(width: size * 0.5, height: size * 0.5)
                 .overlay(RemoteButtonGesture { action in press(.select, action) })
                 .help("Return")
+                .accessibilityElement()
+                .accessibilityLabel("Select")
 
             // Direction dots
             VStack {
-                DPadDot(shortcut: "↑") { action in press(.up, action) }
+                DPadDot(accessibilityLabel: "Up", shortcut: "↑") { action in press(.up, action) }
                 Spacer()
-                DPadDot(shortcut: "↓") { action in press(.down, action) }
+                DPadDot(accessibilityLabel: "Down", shortcut: "↓") { action in press(.down, action) }
             }
             .frame(height: size)
             .padding(.vertical, 12)
 
             HStack {
-                DPadDot(shortcut: "←") { action in press(.left, action) }
+                DPadDot(accessibilityLabel: "Left", shortcut: "←") { action in press(.left, action) }
                 Spacer()
-                DPadDot(shortcut: "→") { action in press(.right, action) }
+                DPadDot(accessibilityLabel: "Right", shortcut: "→") { action in press(.right, action) }
             }
             .frame(width: size)
             .padding(.horizontal, 12)
@@ -912,6 +944,7 @@ struct DPadView: View {
 }
 
 struct DPadDot: View {
+    let accessibilityLabel: String
     let shortcut: String
     let action: (InputAction) -> Void
 
@@ -1073,22 +1106,26 @@ struct ErrorView: View {
 
 struct SettingsView: View {
     @Environment(AppleTVManager.self) private var manager
+    @State private var pairedDeviceIDs: [String] = []
+    @State private var launchAtLogin = false
+    @State private var loginItemError: String?
 
     var body: some View {
         Form {
             Section("Paired devices") {
-                let deviceIDs = KeychainStorage.allPairedDeviceIDs()
-                if deviceIDs.isEmpty {
+                if pairedDeviceIDs.isEmpty {
                     Text("No paired devices")
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(deviceIDs, id: \.self) { id in
+                    ForEach(pairedDeviceIDs, id: \.self) { id in
                         HStack {
                             Image(systemName: "appletv.fill")
-                            Text(id)
+                                .foregroundStyle(.tint)
+                            Text(friendlyName(for: id))
                             Spacer()
                             Button("Remove") {
                                 KeychainStorage.delete(for: id)
+                                pairedDeviceIDs.removeAll { $0 == id }
                             }
                             .foregroundStyle(.red)
                         }
@@ -1096,11 +1133,42 @@ struct SettingsView: View {
                 }
             }
             Section("General") {
-                Toggle("Launch at login", isOn: .constant(false))
+                Toggle("Launch at login", isOn: Binding(
+                    get: { launchAtLogin },
+                    set: setLaunchAtLogin
+                ))
+                if let loginItemError {
+                    Label(loginItemError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
             }
         }
         .formStyle(.grouped)
-        .frame(width: 400, height: 300)
+        .frame(minWidth: 400, minHeight: 300)
+        .onAppear {
+            pairedDeviceIDs = KeychainStorage.allPairedDeviceIDs()
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+        }
+    }
+
+    private func friendlyName(for deviceID: String) -> String {
+        manager.discoveredDevices.first(where: { $0.id == deviceID })?.name ?? "Apple TV"
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+            loginItemError = nil
+        } catch {
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+            loginItemError = error.localizedDescription
+        }
     }
 }
 

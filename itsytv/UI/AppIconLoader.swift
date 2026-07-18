@@ -2,6 +2,7 @@ import AppKit
 import ItsytvCore
 
 @Observable
+@MainActor
 final class AppIconLoader {
     private(set) var icons: [String: NSImage] = [:]
     private var pending: Set<String> = []
@@ -13,9 +14,11 @@ final class AppIconLoader {
             pending.insert(app.bundleID)
 
             AppIconFetcher.fetchIconData(bundleID: app.bundleID, name: app.name) { [weak self] data in
-                defer { self?.pending.remove(app.bundleID) }
-                guard let data, let image = NSImage(data: data) else { return }
-                self?.icons[app.bundleID] = image
+                DispatchQueue.main.async {
+                    defer { self?.pending.remove(app.bundleID) }
+                    guard let data, let image = NSImage(data: data) else { return }
+                    self?.icons[app.bundleID] = image
+                }
             }
         }
     }
