@@ -314,7 +314,10 @@ struct NowPlayingRefreshKey: Equatable {
 }
 
 enum NowPlayingRefreshPolicy {
-    static let retryDelays: [TimeInterval] = [0, 2, 5]
+    // The Companion connection often reports `.connected` before the separate
+    // AirPlay MRP session is ready to answer playback-queue requests. Keep the
+    // retries bounded, but cover that longer initialization window.
+    static let retryDelays: [TimeInterval] = [0, 2, 5, 10, 20, 30]
 
     static func shouldRefresh(_ key: NowPlayingRefreshKey) -> Bool {
         guard key.isConnected else { return false }

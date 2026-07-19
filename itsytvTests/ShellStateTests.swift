@@ -71,7 +71,7 @@ final class ShellStateTests: XCTestCase {
             album: nil,
             hasArtwork: true
         )))
-        XCTAssertEqual(NowPlayingRefreshPolicy.retryDelays, [0, 2, 5])
+        XCTAssertEqual(NowPlayingRefreshPolicy.retryDelays, [0, 2, 5, 10, 20, 30])
     }
 
     func testArtworkCacheFileNameEscapesPathSeparators() {
