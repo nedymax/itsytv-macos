@@ -33,4 +33,50 @@ final class ShellStateTests: XCTestCase {
         XCTAssertFalse(RemoteButtonTracking.shouldFireClick(holdFired: true, releasedInside: true))
         XCTAssertTrue(RemoteButtonTracking.shouldFireClick(holdFired: false, releasedInside: true))
     }
+
+    func testDeviceMenuPresentationSeparatesConnectionAndPairingState() {
+        XCTAssertEqual(DeviceMenuPresentationState(isConnected: true, isPaired: true), .connected)
+        XCTAssertEqual(DeviceMenuPresentationState(isConnected: false, isPaired: true), .paired)
+        XCTAssertEqual(DeviceMenuPresentationState(isConnected: false, isPaired: false), .available)
+        XCTAssertTrue(DeviceMenuPresentationState.paired.usesAccentColor)
+        XCTAssertFalse(DeviceMenuPresentationState.available.usesAccentColor)
+    }
+
+    func testNowPlayingRefreshPolicyIsBoundedToMissingPresentationData() {
+        XCTAssertFalse(NowPlayingRefreshPolicy.shouldRefresh(NowPlayingRefreshKey(
+            isConnected: false,
+            title: nil,
+            artist: nil,
+            album: nil,
+            hasArtwork: false
+        )))
+        XCTAssertTrue(NowPlayingRefreshPolicy.shouldRefresh(NowPlayingRefreshKey(
+            isConnected: true,
+            title: nil,
+            artist: nil,
+            album: nil,
+            hasArtwork: false
+        )))
+        XCTAssertTrue(NowPlayingRefreshPolicy.shouldRefresh(NowPlayingRefreshKey(
+            isConnected: true,
+            title: "Episode",
+            artist: nil,
+            album: nil,
+            hasArtwork: false
+        )))
+        XCTAssertFalse(NowPlayingRefreshPolicy.shouldRefresh(NowPlayingRefreshKey(
+            isConnected: true,
+            title: "Episode",
+            artist: nil,
+            album: nil,
+            hasArtwork: true
+        )))
+        XCTAssertEqual(NowPlayingRefreshPolicy.retryDelays, [0, 2, 5])
+    }
+
+    func testArtworkCacheFileNameEscapesPathSeparators() {
+        let name = AppIconLoader.cacheFileName(bundleID: "com.example/app")
+        XCTAssertFalse(name.contains("/"))
+        XCTAssertTrue(name.hasSuffix(".image"))
+    }
 }

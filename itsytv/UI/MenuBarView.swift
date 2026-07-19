@@ -186,9 +186,19 @@ struct NowPlayingBar: View {
     var body: some View {
         let mrp = manager.mrpManager
         let np = mrp.nowPlaying
-        let hasContent = np != nil
+        let isConnected = manager.connectionStatus == .connected
+        let hasContent = isConnected && np != nil
+        let refreshKey = NowPlayingRefreshKey(
+            isConnected: isConnected,
+            title: np?.title,
+            artist: np?.artist,
+            album: np?.album,
+            hasArtwork: np?.artworkData != nil
+        )
 
-        VStack(spacing: 6) {
+        Group {
+            if hasContent {
+                VStack(spacing: 6) {
             // Artwork — full width, square
             if let data = np?.artworkData, let image = NSImage(data: data) {
                 Color.clear
@@ -264,9 +274,54 @@ struct NowPlayingBar: View {
                 onSeek: { position in mrp.seekToPosition(position) }
             )
             .opacity(hasContent && (np?.duration ?? 0) > 0 ? 1 : 0.3)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 16)
+        .task(id: refreshKey) {
+            await refreshNowPlaying(using: mrp, key: refreshKey)
+        }
+    }
+
+    private func refreshNowPlaying(using mrp: MRPManager, key: NowPlayingRefreshKey) async {
+        guard NowPlayingRefreshPolicy.shouldRefresh(key) else { return }
+        for delay in NowPlayingRefreshPolicy.retryDelays {
+            if delay > 0 {
+                try? await Task.sleep(for: .seconds(delay))
+            }
+            guard !Task.isCancelled, manager.connectionStatus == .connected else { return }
+            let current = mrp.nowPlaying
+            let currentKey = NowPlayingRefreshKey(
+                isConnected: true,
+                title: current?.title,
+                artist: current?.artist,
+                album: current?.album,
+                hasArtwork: current?.artworkData != nil
+            )
+            guard NowPlayingRefreshPolicy.shouldRefresh(currentKey) else { return }
+            mrp.refreshNowPlaying()
+        }
+    }
+}
+
+struct NowPlayingRefreshKey: Equatable {
+    let isConnected: Bool
+    let title: String?
+    let artist: String?
+    let album: String?
+    let hasArtwork: Bool
+}
+
+enum NowPlayingRefreshPolicy {
+    static let retryDelays: [TimeInterval] = [0, 2, 5]
+
+    static func shouldRefresh(_ key: NowPlayingRefreshKey) -> Bool {
+        guard key.isConnected else { return false }
+        let hasMetadata = [key.title, key.artist, key.album]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .contains { !$0.isEmpty }
+        return !hasMetadata || !key.hasArtwork
     }
 }
 
