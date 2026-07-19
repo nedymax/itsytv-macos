@@ -461,10 +461,10 @@ struct RemoteTabContent: View {
                 // Rows 2-3: Play/Pause + Mute left, Volume pill right
                 HStack(alignment: .top, spacing: buttonGap) {
                     VStack(spacing: buttonGap) {
-                        RemoteCircleButton(symbolName: "playpause.fill", accessibilityLabel: "Play or pause", button: .playPause, shortcut: "Space", size: buttonSize) { action in
+                        RemoteCircleButton(symbolName: "playpause", accessibilityLabel: "Play or pause", button: .playPause, shortcut: "Space", size: buttonSize) { action in
                             manager.pressButton(.playPause, action: action)
                         }
-                        RemoteCircleButton(symbolName: "speaker.slash.fill", accessibilityLabel: "Mute", button: .siri, shortcut: "⌘⇧M", size: buttonSize) { action in
+                        RemoteCircleButton(symbolName: "speaker.slash", accessibilityLabel: "Mute", button: .siri, shortcut: "⌘⇧M", size: buttonSize) { action in
                             guard action == .click else { return }
                             manager.toggleMute()
                         }
