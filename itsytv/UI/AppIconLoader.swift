@@ -65,7 +65,7 @@ final class AppIconLoader {
         }
     }
 
-    static func cacheFileName(bundleID: String) -> String {
+    nonisolated static func cacheFileName(bundleID: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
         return (bundleID.addingPercentEncoding(withAllowedCharacters: allowed) ?? UUID().uuidString) + ".image"
     }
