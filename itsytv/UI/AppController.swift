@@ -225,6 +225,7 @@ final class AppController: NSObject, NSMenuDelegate {
         case .connecting:
             if panel != nil { return }
             let item = NSMenuItem(title: "Connecting...", action: nil, keyEquivalent: "")
+            item.image = menuSymbol(named: "arrow.triangle.2.circlepath", accessibilityDescription: "Connecting")
             item.isEnabled = false
             menu.addItem(item)
         case .pairing:
@@ -232,6 +233,7 @@ final class AppController: NSObject, NSMenuDelegate {
             menu.addItem(pairing)
         case .error(let message):
             let errorItem = NSMenuItem(title: message, action: nil, keyEquivalent: "")
+            errorItem.image = menuSymbol(named: "exclamationmark.triangle.fill", accessibilityDescription: "Connection error")
             errorItem.isEnabled = false
             menu.addItem(errorItem)
             menu.addItem(NSMenuItem.separator())
@@ -291,6 +293,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private func buildDeviceList() {
         if manager.discoveredDevices.isEmpty {
             let scanning = NSMenuItem(title: "Scanning for devices...", action: nil, keyEquivalent: "")
+            scanning.image = menuSymbol(named: "antenna.radiowaves.left.and.right", accessibilityDescription: "Scanning for devices")
             scanning.isEnabled = false
             menu.addItem(scanning)
         } else {
