@@ -21,6 +21,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var alwaysOnTopObserver: NSObjectProtocol?
     private var lastAlwaysOnTopValue: Bool?
     private var pendingOpenTimeoutWorkItem: DispatchWorkItem?
+    private var isReconfiguringPanel = false
 
     init(manager: AppleTVManager, iconLoader: AppIconLoader) {
         self.manager = manager
@@ -54,7 +55,7 @@ final class AppController: NSObject, NSMenuDelegate {
         HotkeyManager.shared.onHotkeyPressed = { [weak self] deviceID in
             guard let self else { return }
             if self.panel?.isVisible == true && self.panelDeviceID == deviceID {
-                self.manager.disconnect()
+                self.dismissPanel()
             } else {
                 self.openRemote(for: deviceID)
             }
@@ -186,7 +187,9 @@ final class AppController: NSObject, NSMenuDelegate {
 
         switch currentStatus {
         case .disconnected:
-            dismissPanel()
+            // A transient connection loss must not dismiss an active remote.
+            // The panel follows normal popover behavior and closes when focus
+            // moves outside it or when the user explicitly closes it.
             rebuildMenu()
         case .connecting:
             if panel != nil {
@@ -378,7 +381,9 @@ final class AppController: NSObject, NSMenuDelegate {
             return
         }
 
-        let panelContent = PanelContentView()
+        let panelContent = PanelContentView { [weak self] in
+            self?.dismissPanel()
+        }
             .environment(manager)
             .environment(iconLoader)
 
@@ -443,16 +448,21 @@ final class AppController: NSObject, NSMenuDelegate {
             let onTop = UserDefaults.standard.object(forKey: "alwaysOnTop") as? Bool ?? true
             guard onTop != self.lastAlwaysOnTopValue else { return }
             self.lastAlwaysOnTopValue = onTop
+            self.isReconfiguringPanel = true
             panel.isFloatingPanel = onTop
             panel.level = onTop ? .statusBar : .normal
             panel.styleMask = onTop ? [.nonactivatingPanel] : [.borderless]
             panel.orderOut(nil)
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
+            DispatchQueue.main.async { [weak self] in
+                self?.isReconfiguringPanel = false
+            }
         }
     }
 
     private func makePanelSurface(hostingView: NSView) -> NSView {
+        let panelCornerRadius: CGFloat = 14
         #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             hostingView.translatesAutoresizingMaskIntoConstraints = true
@@ -475,7 +485,7 @@ final class AppController: NSObject, NSMenuDelegate {
         vibrancy.material = .popover
         vibrancy.state = .active
         vibrancy.wantsLayer = true
-        vibrancy.layer?.cornerRadius = 10
+        vibrancy.layer?.cornerRadius = panelCornerRadius
         vibrancy.layer?.cornerCurve = .continuous
         vibrancy.layer?.masksToBounds = true
         vibrancy.addSubview(hostingView)
@@ -489,16 +499,20 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func dismissPanel() {
+        guard let panel else { return }
         removeKeyboardMonitor()
         if let observer = alwaysOnTopObserver {
             NotificationCenter.default.removeObserver(observer)
             alwaysOnTopObserver = nil
         }
         savePanelPosition()
-        panel?.close()
-        panel = nil
+        self.panel = nil
         panelDeviceID = nil
         lastAlwaysOnTopValue = nil
+        panel.close()
+        if manager.connectionStatus != .disconnected {
+            manager.disconnect()
+        }
     }
 
     private func savePanelPosition() {
@@ -870,13 +884,11 @@ struct PanelMenuButton: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 13, weight: .semibold))
-                .frame(width: 16, height: 16)
+                .frame(width: 24, height: 24)
         }
-        .menuStyle(.button)
-        .nativePanelControlStyle()
+        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .controlSize(.regular)
-        .frame(width: 32, height: 32)
         .fixedSize()
         .help("Remote options")
         .accessibilityLabel("Remote options")
@@ -1058,12 +1070,13 @@ struct PanelCloseButton: View {
 
 struct PanelContentView: View {
     @Environment(AppleTVManager.self) private var manager
+    let onDismiss: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             switch manager.connectionStatus {
-            case .connecting, .connected:
-                RemoteControlView()
+            case .disconnected, .connecting, .connected:
+                RemoteControlView(onDismiss: onDismiss)
             case .error(let message):
                 ErrorView(message: message)
             default:
@@ -1077,6 +1090,17 @@ struct PanelContentView: View {
 // MARK: - NSWindowDelegate
 
 extension AppController: NSWindowDelegate {
+    func windowDidResignKey(_ notification: Notification) {
+        guard (notification.object as? NSPanel) === panel,
+              !isReconfiguringPanel else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let panel = self.panel,
+                  !panel.isKeyWindow,
+                  !self.isReconfiguringPanel else { return }
+            self.dismissPanel()
+        }
+    }
+
     func windowWillClose(_ notification: Notification) {
         if (notification.object as? NSPanel) === panel {
             savePanelPosition()

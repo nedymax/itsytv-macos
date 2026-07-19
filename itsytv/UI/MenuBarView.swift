@@ -9,6 +9,7 @@ enum RemoteTab: String, CaseIterable {
 
 struct RemoteControlView: View {
     @Environment(AppleTVManager.self) private var manager
+    let onDismiss: () -> Void
     @State private var selectedTab: RemoteTab = .remote
     @State private var showingKeyboard = false
     @State private var keyboardText = ""
@@ -34,7 +35,7 @@ struct RemoteControlView: View {
                     }
                     manager.disconnect()
                 }
-                PanelCloseButton { manager.disconnect() }
+                PanelCloseButton(action: onDismiss)
             }
             .padding(.horizontal, 8)
             .padding(.top, 8)
