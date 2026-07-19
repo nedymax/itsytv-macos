@@ -130,6 +130,9 @@ struct NativeSegmentPicker<T: Hashable>: NSViewRepresentable {
             action: #selector(Coordinator.selectionChanged(_:))
         )
         control.segmentStyle = .capsule
+        if #available(macOS 26.0, *) {
+            control.borderShape = .capsule
+        }
         control.segmentDistribution = .fillEqually
         control.controlSize = .large
         control.setAccessibilityLabel("Remote view")
