@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="133"
+     height="133"
+     viewBox="0 0 133 133">
+  <g fill="#000000">
+    <!-- Television body: true rounded vector stroke -->
+    <rect x="16.5" y="37.5"
+          width="99.5" height="70.5"
+          rx="7.5"
+          fill="none"
+          stroke="#000000"
+          stroke-width="9"/>
+
+    <!-- Centre divider -->
+    <rect x="75" y="33" width="8" height="75"/>
+
+    <!-- Antennas -->
+    <path d="M67 34 L40.5 8.5"
+          fill="none"
+          stroke="#000000"
+          stroke-width="9"
+          stroke-linecap="round"/>
+    <path d="M67 34 L91.5 8.5"
+          fill="none"
+          stroke="#000000"
+          stroke-width="9"
+          stroke-linecap="round"/>
+
+    <!-- Controls -->
+    <circle cx="97.5" cy="60" r="6.5"/>
+    <circle cx="97.5" cy="85.5" r="6.5"/>
+  </g>
+</svg>

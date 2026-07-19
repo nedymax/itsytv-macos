@@ -15,9 +15,9 @@
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
+	<string>ItsyTV</string>
 	<key>CFBundleIconName</key>
-	<string>AppIcon</string>
+	<string>ItsyTV</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSApplicationCategoryType</key>
