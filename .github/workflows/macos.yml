@@ -46,17 +46,25 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             test
 
-      - name: Package app
+      - name: Build and package Release app
         working-directory: itsytv-macos
         run: |
+          xcodebuild \
+            -project itsytv.xcodeproj \
+            -scheme itsytv \
+            -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
           mkdir -p artifacts
-          ditto -c -k --sequesterRsrc --keepParent \
-            build/Build/Products/Debug/Itsytv.app \
-            artifacts/Itsytv-macOS-26.zip
+          tar -czf artifacts/Itsytv-macOS-26.tar.gz \
+            -C build/Build/Products/Release \
+            Itsytv.app
 
       - name: Upload app
         uses: actions/upload-artifact@v7
         with:
-          name: Itsytv-macOS-26
-          path: itsytv-macos/artifacts/Itsytv-macOS-26.zip
+          path: itsytv-macos/artifacts/Itsytv-macOS-26.tar.gz
           if-no-files-found: error
+          archive: false
