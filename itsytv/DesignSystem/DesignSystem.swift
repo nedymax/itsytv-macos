@@ -46,6 +46,12 @@ enum DS {
 
         static var remoteButton: NSColor {
             NSColor(name: nil) { appearance in
+                appearance.isDark ? .underPageBackgroundColor : NSColor(white: 0.205, alpha: 1)
+            }
+        }
+
+        static var remoteButtonCenter: NSColor {
+            NSColor(name: nil) { appearance in
                 appearance.isDark ? NSColor(white: 0.27, alpha: 1) : NSColor(white: 0.205, alpha: 1)
             }
         }

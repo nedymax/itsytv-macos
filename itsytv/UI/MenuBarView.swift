@@ -28,6 +28,7 @@ struct RemoteControlView: View {
                 Text(manager.connectedDeviceName ?? "Apple TV")
                     .font(.subheadline)
                     .lineLimit(1)
+                    .padding(.leading, 16)
                 Spacer()
                 PanelMenuButton(deviceID: manager.connectedDeviceID ?? "") {
                     if let deviceID = manager.connectedDeviceID {
@@ -67,7 +68,7 @@ struct RemoteControlView: View {
                     selection: $selectedTab,
                     options: RemoteTab.allCases.map { ($0, $0.rawValue) }
                 )
-                .frame(height: 32)
+                .frame(height: 48)
                 .padding(.horizontal, 24)
 
                 // Keyboard text input (pushes content down when visible)
@@ -934,7 +935,7 @@ struct DPadView: View {
 
             // Center select button — larger, subtly distinct from outer ring
             Circle()
-                .fill(Color(nsColor: DS.Colors.remoteButtonForeground).opacity(0.08))
+                .fill(Color(nsColor: DS.Colors.remoteButtonCenter))
                 .frame(width: size * 0.5, height: size * 0.5)
                 .overlay(RemoteButtonGesture { action in press(.select, action) })
                 .help("Return")
