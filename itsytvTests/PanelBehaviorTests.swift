@@ -1,6 +1,6 @@
 import AppKit
 import XCTest
-@testable import itsytv
+@testable import Itsytv
 
 final class PanelPositioningTests: XCTestCase {
     private let screen = NSRect(x: 0, y: 0, width: 1440, height: 900)

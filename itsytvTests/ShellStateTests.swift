@@ -1,7 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import XCTest
-@testable import itsytv
+@testable import Itsytv
 
 final class ShellStateTests: XCTestCase {
     func testEmptyDeviceIDsAreRejectedForHotkeys() {

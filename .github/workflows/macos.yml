@@ -11,12 +11,12 @@ jobs:
 
     steps:
       - name: Check out macOS app
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: itsytv-macos
 
       - name: Check out itsytv-core dependency
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: nickustinov/itsytv-core
           path: itsytv-core
