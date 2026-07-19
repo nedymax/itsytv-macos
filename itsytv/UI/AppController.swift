@@ -235,7 +235,7 @@ final class AppController: NSObject, NSMenuDelegate {
             errorItem.isEnabled = false
             menu.addItem(errorItem)
             menu.addItem(NSMenuItem.separator())
-            let dismissItem = createActionItem(title: "Dismiss") { [weak self] in
+            let dismissItem = createActionItem(title: "Dismiss", symbolName: "xmark.circle") { [weak self] in
                 self?.manager.disconnect()
             }
             menu.addItem(dismissItem)
@@ -256,6 +256,7 @@ final class AppController: NSObject, NSMenuDelegate {
             #endif
             let loginItem = createCheckboxItem(
                 title: "Launch at login",
+                symbolName: "person.crop.circle.badge.checkmark",
                 isOn: SMAppService.mainApp.status == .enabled
             ) {
                 do {
@@ -303,28 +304,29 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func createDeviceItem(device: AppleTVDevice, isPaired: Bool) -> NSMenuItem {
-        if !isPaired {
-            return createUnpairedDeviceItem(device)
-        }
-
-        let item = ClosureMenuItem(title: device.name) { [weak self] in
-            self?.openRemote(for: device.id)
-        }
-        let symbol = NSImage(systemSymbolName: "appletv.fill", accessibilityDescription: device.name)
-        let configuration = NSImage.SymbolConfiguration(paletteColors: [.controlAccentColor])
-        item.image = symbol?.withSymbolConfiguration(configuration)
-        item.image?.isTemplate = false
+        let isConnected = manager.connectionStatus == .connected && manager.connectedDeviceID == device.id
+        let state = DeviceMenuPresentationState(isConnected: isConnected, isPaired: isPaired)
+        let view = DeviceMenuItemView(
+            frame: NSRect(
+                x: 0,
+                y: 0,
+                width: DS.ControlSize.menuItemWidth,
+                height: DS.ControlSize.deviceMenuItemHeight
+            ),
+            deviceName: device.name,
+            state: state,
+            closesMenuOnAction: isPaired
+        )
+        view.onAction = { [weak self] in self?.openRemote(for: device.id) }
+        let item = NSMenuItem(title: device.name, action: nil, keyEquivalent: "")
+        item.view = view
 
         if let keys = HotkeyStorage.load(deviceID: device.id) {
             if let registrationError = HotkeyManager.shared.registrationFailures[device.id] {
-                let title = NSMutableAttributedString(string: device.name)
-                title.append(NSAttributedString(
-                    string: "  Shortcut inactive",
-                    attributes: [.foregroundColor: NSColor.systemRed, .font: NSFont.menuFont(ofSize: 11)]
-                ))
-                item.attributedTitle = title
-                item.toolTip = registrationError.localizedDescription
+                view.setShortcutStatus("Shortcut inactive", isError: true)
+                view.toolTip = registrationError.localizedDescription
             } else if let keyEquivalent = keys.menuKeyEquivalent {
+                view.setShortcutStatus(keys.displayString, isError: false)
                 item.keyEquivalent = keyEquivalent
                 item.keyEquivalentModifierMask = keys.menuModifierFlags
             }
@@ -332,55 +334,17 @@ final class AppController: NSObject, NSMenuDelegate {
         return item
     }
 
-    private func createUnpairedDeviceItem(_ device: AppleTVDevice) -> NSMenuItem {
-        let view = PersistentMenuItemView(frame: NSRect(
-            x: 0,
-            y: 0,
-            width: DS.ControlSize.menuItemWidth,
-            height: DS.ControlSize.menuItemHeight
-        ))
-        view.setAccessibilityLabel(device.name)
-        view.setAccessibilityRole(.button)
-
-        let iconSize = DS.ControlSize.iconMedium
-        let icon = NSImageView(frame: NSRect(
-            x: DS.Spacing.md,
-            y: (view.bounds.height - iconSize) / 2,
-            width: iconSize,
-            height: iconSize
-        ))
-        icon.image = NSImage(systemSymbolName: "appletv.fill", accessibilityDescription: device.name)
-        icon.contentTintColor = .secondaryLabelColor
-        view.addSubview(icon)
-
-        let label = NSTextField(labelWithString: device.name)
-        label.font = .menuFont(ofSize: 0)
-        label.textColor = .labelColor
-        label.lineBreakMode = .byTruncatingTail
-        label.frame = NSRect(
-            x: DS.Spacing.md + iconSize + DS.Spacing.sm,
-            y: (view.bounds.height - 17) / 2,
-            width: view.bounds.width - DS.Spacing.md * 2 - iconSize - DS.Spacing.sm,
-            height: 17
-        )
-        view.addSubview(label)
-        view.onAction = { [weak self] in self?.openRemote(for: device.id) }
-
-        let item = NSMenuItem(title: device.name, action: nil, keyEquivalent: "")
-        item.view = view
-        return item
-    }
-
     private func createActionItem(title: String, symbolName: String? = nil, action: @escaping () -> Void) -> NSMenuItem {
         let item = ClosureMenuItem(title: title, action: action)
         if let symbolName {
-            item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
+            item.image = menuSymbol(named: symbolName, accessibilityDescription: title)
         }
         return item
     }
 
-    private func createCheckboxItem(title: String, isOn: Bool, action: @escaping () -> Void) -> NSMenuItem {
+    private func createCheckboxItem(title: String, symbolName: String, isOn: Bool, action: @escaping () -> Void) -> NSMenuItem {
         let item = ClosureMenuItem(title: title, action: action)
+        item.image = menuSymbol(named: symbolName, accessibilityDescription: title)
         item.state = isOn ? .on : .off
         return item
     }
@@ -391,8 +355,17 @@ final class AppController: NSObject, NSMenuDelegate {
                 NSWorkspace.shared.open(url)
             }
         })
-        item.image = NSImage(systemSymbolName: "house.fill", accessibilityDescription: "Try Itsyhome")
+        item.image = menuSymbol(named: "house.fill", accessibilityDescription: "Try Itsyhome")
         return item
+    }
+
+    private func menuSymbol(named name: String, accessibilityDescription: String) -> NSImage? {
+        let configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: accessibilityDescription)?
+            .withSymbolConfiguration(configuration) else { return nil }
+        image.isTemplate = true
+        image.size = NSSize(width: 16, height: 16)
+        return image
     }
 
     // MARK: - Panel
@@ -447,6 +420,12 @@ final class AppController: NSObject, NSMenuDelegate {
             panel.setFrameOrigin(origin)
         }
 
+        // Do not assign initial keyboard focus to the first SwiftUI control.
+        // The normal key-view loop remains available as soon as the user presses Tab.
+        DispatchQueue.main.async { [weak panel] in
+            panel?.makeFirstResponder(nil)
+        }
+
         self.panel = panel
         self.panelDeviceID = manager.connectedDeviceID
         installKeyboardMonitor()
@@ -479,6 +458,10 @@ final class AppController: NSObject, NSMenuDelegate {
             let glass = NSGlassEffectView(frame: hostingView.frame)
             glass.style = .regular
             glass.cornerRadius = 10
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = glass.cornerRadius
+            glass.layer?.cornerCurve = .continuous
+            glass.layer?.masksToBounds = true
             glass.contentView = hostingView
             return glass
         }
@@ -486,10 +469,11 @@ final class AppController: NSObject, NSMenuDelegate {
 
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         let vibrancy = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 176, height: 400))
-        vibrancy.material = .menu
+        vibrancy.material = .popover
         vibrancy.state = .active
         vibrancy.wantsLayer = true
         vibrancy.layer?.cornerRadius = 10
+        vibrancy.layer?.cornerCurve = .continuous
         vibrancy.layer?.masksToBounds = true
         vibrancy.addSubview(hostingView)
         NSLayoutConstraint.activate([
@@ -662,12 +646,113 @@ private final class ClosureMenuItem: NSMenuItem {
     }
 }
 
-/// Used only for unpaired devices because native menu-item actions close the
-/// menu before the inline pairing flow can replace it.
-private final class PersistentMenuItemView: NSView {
+enum DeviceMenuPresentationState: Equatable {
+    case connected
+    case paired
+    case available
+
+    init(isConnected: Bool, isPaired: Bool) {
+        if isConnected {
+            self = .connected
+        } else if isPaired {
+            self = .paired
+        } else {
+            self = .available
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .connected: "Connected"
+        case .paired: "Paired"
+        case .available: "Not paired"
+        }
+    }
+
+    var usesAccentColor: Bool { self != .available }
+}
+
+private final class DeviceStatusIconView: NSView {
+    let usesAccentColor: Bool
+    private let imageView: NSImageView
+
+    init(frame: NSRect, usesAccentColor: Bool, accessibilityDescription: String) {
+        self.usesAccentColor = usesAccentColor
+        imageView = NSImageView(frame: frame.insetBy(dx: 8, dy: 8))
+        super.init(frame: frame)
+        imageView.frame.origin = NSPoint(x: 8, y: 8)
+        imageView.image = NSImage(systemSymbolName: "appletv.fill", accessibilityDescription: accessibilityDescription)
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.contentTintColor = .white
+        addSubview(imageView)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        (usesAccentColor ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor).setFill()
+        NSBezierPath(ovalIn: bounds).fill()
+    }
+}
+
+private final class DeviceMenuItemView: NSView {
     var onAction: (() -> Void)?
-    private var isHighlighted = false
+    private let closesMenuOnAction: Bool
+    private let nameLabel: NSTextField
+    private let detailLabel: NSTextField
+    private let shortcutLabel: NSTextField
+    private var isHovered = false
+    private var isPressed = false
     private var trackingArea: NSTrackingArea?
+
+    init(
+        frame: NSRect,
+        deviceName: String,
+        state: DeviceMenuPresentationState,
+        closesMenuOnAction: Bool
+    ) {
+        self.closesMenuOnAction = closesMenuOnAction
+        nameLabel = NSTextField(labelWithString: deviceName)
+        detailLabel = NSTextField(labelWithString: state.detail)
+        shortcutLabel = NSTextField(labelWithString: "")
+        super.init(frame: frame)
+
+        setAccessibilityLabel("\(deviceName), \(state.detail)")
+        setAccessibilityRole(.button)
+
+        let iconSize: CGFloat = 32
+        let icon = DeviceStatusIconView(
+            frame: NSRect(x: 10, y: (bounds.height - iconSize) / 2, width: iconSize, height: iconSize),
+            usesAccentColor: state.usesAccentColor,
+            accessibilityDescription: deviceName
+        )
+        addSubview(icon)
+
+        let textX = icon.frame.maxX + 10
+        nameLabel.font = .menuFont(ofSize: 0)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.frame = NSRect(x: textX, y: 25, width: 150, height: 17)
+        addSubview(nameLabel)
+
+        detailLabel.font = .systemFont(ofSize: 11)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.frame = NSRect(x: textX, y: 8, width: 150, height: 14)
+        addSubview(detailLabel)
+
+        shortcutLabel.font = .menuFont(ofSize: 11)
+        shortcutLabel.textColor = .tertiaryLabelColor
+        shortcutLabel.alignment = .right
+        shortcutLabel.frame = NSRect(x: 202, y: 17, width: 46, height: 16)
+        addSubview(shortcutLabel)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func setShortcutStatus(_ value: String, isError: Bool) {
+        shortcutLabel.stringValue = value
+        shortcutLabel.textColor = isError ? .systemRed : .tertiaryLabelColor
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -683,32 +768,50 @@ private final class PersistentMenuItemView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        isHighlighted = true
-        updateContentColors(highlighted: true)
+        isHovered = true
+        updateContentColors()
         needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
-        isHighlighted = false
-        updateContentColors(highlighted: false)
+        isHovered = false
+        isPressed = false
+        updateContentColors()
+        needsDisplay = true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        updateContentColors()
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
-        onAction?()
+        let releasedInside = bounds.contains(convert(event.locationInWindow, from: nil))
+        isPressed = false
+        updateContentColors()
+        needsDisplay = true
+        guard releasedInside else { return }
+        if closesMenuOnAction {
+            enclosingMenuItem?.menu?.cancelTracking()
+            DispatchQueue.main.async { [weak self] in self?.onAction?() }
+        } else {
+            onAction?()
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard isHighlighted else { return }
+        guard isHovered || isPressed else { return }
         NSColor.selectedContentBackgroundColor.setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 1), xRadius: 5, yRadius: 5).fill()
     }
 
-    private func updateContentColors(highlighted: Bool) {
-        for subview in subviews {
-            (subview as? NSTextField)?.textColor = highlighted ? .selectedMenuItemTextColor : .labelColor
-            (subview as? NSImageView)?.contentTintColor = highlighted ? .selectedMenuItemTextColor : .secondaryLabelColor
+    private func updateContentColors() {
+        let highlighted = isHovered || isPressed
+        nameLabel.textColor = highlighted ? .selectedMenuItemTextColor : .labelColor
+        detailLabel.textColor = highlighted ? .selectedMenuItemTextColor.withAlphaComponent(0.8) : .secondaryLabelColor
+        if shortcutLabel.textColor != .systemRed {
+            shortcutLabel.textColor = highlighted ? .selectedMenuItemTextColor.withAlphaComponent(0.7) : .tertiaryLabelColor
         }
     }
 }
@@ -762,18 +865,15 @@ struct PanelMenuButton: View {
             Divider()
             Button("Unpair", role: .destructive, action: onUnpair)
         } label: {
-            ZStack {
-                Circle()
-                    .fill(Color.secondary.opacity(0.15))
-                    .frame(width: 28, height: 28)
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-            }
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 16, height: 16)
         }
-        .buttonStyle(.plain)
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .nativePanelControlStyle()
         .menuIndicator(.hidden)
+        .controlSize(.regular)
+        .frame(width: 32, height: 32)
         .fixedSize()
         .help("Remote options")
         .accessibilityLabel("Remote options")
@@ -941,16 +1041,13 @@ struct PanelCloseButton: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(Color.secondary.opacity(0.15))
-                    .frame(width: 28, height: 28)
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-            }
+            Image(systemName: "xmark")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 16, height: 16)
         }
-        .buttonStyle(.plain)
+        .nativePanelControlStyle()
+        .controlSize(.regular)
+        .frame(width: 32, height: 32)
         .help("Close remote")
         .accessibilityLabel("Close remote")
     }

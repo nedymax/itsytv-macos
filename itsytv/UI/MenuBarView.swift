@@ -117,12 +117,12 @@ struct RemoteControlView: View {
                                 }
                             } label: {
                                 Image(systemName: "keyboard")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 24, height: 24)
-                                    .background(Circle().fill(Color.secondary.opacity(0.12)))
+                                    .font(.system(size: 13, weight: .medium))
+                                    .frame(width: 16, height: 16)
                             }
-                            .buttonStyle(.plain)
+                            .nativePanelControlStyle()
+                            .controlSize(.regular)
+                            .frame(width: 32, height: 32)
                             .help("Show keyboard")
                             .accessibilityLabel("Show Apple TV keyboard")
 
@@ -1034,26 +1034,29 @@ private struct PowerButton: View {
     }
 
     var body: some View {
-        Image(systemName: "power")
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.secondary)
-            .frame(width: 28, height: 28)
-            .background(Circle().fill(Color.secondary.opacity(0.12)))
-            .onTapGesture {
-                guard !didLongPress else {
-                    didLongPress = false
-                    return
-                }
+        Button {
+            if didLongPress {
+                didLongPress = false
+            } else {
                 onTap()
             }
-            .onLongPressGesture(minimumDuration: 0.5) {
+        } label: {
+            Image(systemName: "power")
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 16, height: 16)
+        }
+            .nativePanelControlStyle()
+            .controlSize(.regular)
+            .frame(width: 32, height: 32)
+            .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
                 didLongPress = true
                 onLongPress()
-            }
-            .accessibilityElement()
+            })
+            .help("Power")
             .accessibilityLabel("Power")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { onTap() }
+            .accessibilityAction(named: "Open power controls") {
+                onLongPress()
+            }
     }
 }
 

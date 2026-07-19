@@ -93,6 +93,7 @@ enum DS {
     enum ControlSize {
         static let iconMedium: CGFloat = 14
         static let menuItemHeight: CGFloat = 28
+        static let deviceMenuItemHeight: CGFloat = 48
         static let menuItemWidth: CGFloat = 260
     }
 }
@@ -119,5 +120,34 @@ struct NativeSegmentPicker<T: Hashable>: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
+    }
+}
+
+// MARK: - Native panel controls
+
+private struct NativePanelControlStyle: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            content
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+        } else {
+            content
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.circle)
+        }
+        #else
+        content
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.circle)
+        #endif
+    }
+}
+
+extension View {
+    func nativePanelControlStyle() -> some View {
+        modifier(NativePanelControlStyle())
     }
 }
