@@ -3,7 +3,19 @@
     "refractivity",
     "specular-location"
   ],
-  "fill" : "system-dark",
+  "fill-specializations" : [
+    {
+      "value" : "system-light"
+    },
+    {
+      "appearance" : "dark",
+      "value" : "system-dark"
+    },
+    {
+      "appearance" : "tinted",
+      "value" : "system-dark"
+    }
+  ],
   "groups" : [
     {
       "hidden" : false,
