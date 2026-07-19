@@ -15,12 +15,6 @@ jobs:
         with:
           path: itsytv-macos
 
-      - name: Check out itsytv-core dependency
-        uses: actions/checkout@v5
-        with:
-          repository: nickustinov/itsytv-core
-          path: itsytv-core
-
       - name: Install XcodeGen
         run: brew install xcodegen
 

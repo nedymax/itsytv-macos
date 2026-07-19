@@ -23,7 +23,8 @@ settings:
 
 packages:
   ItsytvCore:
-    path: ../itsytv-core
+    url: https://github.com/nedymax/itsytv-core.git
+    branch: dev
 
 schemes:
   itsytv:
