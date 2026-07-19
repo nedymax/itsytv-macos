@@ -444,19 +444,21 @@ final class AppController: NSObject, NSMenuDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self, let panel = self.panel else { return }
-            let onTop = UserDefaults.standard.object(forKey: "alwaysOnTop") as? Bool ?? true
-            guard onTop != self.lastAlwaysOnTopValue else { return }
-            self.lastAlwaysOnTopValue = onTop
-            self.isReconfiguringPanel = true
-            panel.isFloatingPanel = onTop
-            panel.level = onTop ? .statusBar : .normal
-            panel.styleMask = onTop ? [.nonactivatingPanel] : [.borderless]
-            panel.orderOut(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            panel.makeKeyAndOrderFront(nil)
-            DispatchQueue.main.async { [weak self] in
-                self?.isReconfiguringPanel = false
+            Task { @MainActor [weak self] in
+                guard let self, let panel = self.panel else { return }
+                let onTop = UserDefaults.standard.object(forKey: "alwaysOnTop") as? Bool ?? true
+                guard onTop != self.lastAlwaysOnTopValue else { return }
+                self.lastAlwaysOnTopValue = onTop
+                self.isReconfiguringPanel = true
+                panel.isFloatingPanel = onTop
+                panel.level = onTop ? .statusBar : .normal
+                panel.styleMask = onTop ? [.nonactivatingPanel] : [.borderless]
+                panel.orderOut(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                panel.makeKeyAndOrderFront(nil)
+                DispatchQueue.main.async { [weak self] in
+                    self?.isReconfiguringPanel = false
+                }
             }
         }
     }
