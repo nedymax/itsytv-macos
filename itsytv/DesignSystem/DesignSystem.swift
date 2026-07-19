@@ -93,7 +93,7 @@ enum DS {
     enum ControlSize {
         static let iconMedium: CGFloat = 14
         static let menuItemHeight: CGFloat = 28
-        static let deviceMenuItemHeight: CGFloat = 48
+        static let deviceMenuItemHeight: CGFloat = 40
         static let menuItemWidth: CGFloat = 260
     }
 }
@@ -108,18 +108,48 @@ extension NSAppearance {
 
 // MARK: - Native segmented picker
 
-struct NativeSegmentPicker<T: Hashable>: View {
+struct NativeSegmentPicker<T: Hashable>: NSViewRepresentable {
     @Binding var selection: T
     let options: [(T, String)]
 
-    var body: some View {
-        Picker("View", selection: $selection) {
-            ForEach(0..<options.count, id: \.self) { index in
-                Text(options[index].1).tag(options[index].0)
-            }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> NSSegmentedControl {
+        let control = NSSegmentedControl(
+            labels: options.map(\.1),
+            trackingMode: .selectOne,
+            target: context.coordinator,
+            action: #selector(Coordinator.selectionChanged(_:))
+        )
+        control.segmentStyle = .capsule
+        control.segmentDistribution = .fillEqually
+        control.controlSize = .large
+        control.setAccessibilityLabel("Remote view")
+        return control
+    }
+
+    func updateNSView(_ control: NSSegmentedControl, context: Context) {
+        context.coordinator.parent = self
+        control.selectedSegment = options.firstIndex(where: { $0.0 == selection }) ?? -1
+        for (index, option) in options.enumerated() where index < control.segmentCount {
+            control.setLabel(option.1, forSegment: index)
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
+    }
+
+    final class Coordinator: NSObject {
+        var parent: NativeSegmentPicker
+
+        init(parent: NativeSegmentPicker) {
+            self.parent = parent
+        }
+
+        @objc func selectionChanged(_ sender: NSSegmentedControl) {
+            guard sender.selectedSegment >= 0,
+                  sender.selectedSegment < parent.options.count else { return }
+            parent.selection = parent.options[sender.selectedSegment].0
+        }
     }
 }
 

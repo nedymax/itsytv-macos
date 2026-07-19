@@ -67,7 +67,8 @@ struct RemoteControlView: View {
                     selection: $selectedTab,
                     options: RemoteTab.allCases.map { ($0, $0.rawValue) }
                 )
-                .padding(.horizontal, 8)
+                .frame(height: 32)
+                .padding(.horizontal, 24)
 
                 // Keyboard text input (pushes content down when visible)
                 if showingKeyboard && selectedTab == .remote {

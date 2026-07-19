@@ -470,9 +470,9 @@ final class AppController: NSObject, NSMenuDelegate {
             hostingView.autoresizingMask = [.width, .height]
             let glass = NSGlassEffectView(frame: hostingView.frame)
             glass.style = .regular
-            glass.cornerRadius = 10
+            glass.cornerRadius = panelCornerRadius
             glass.wantsLayer = true
-            glass.layer?.cornerRadius = glass.cornerRadius
+            glass.layer?.cornerRadius = panelCornerRadius
             glass.layer?.cornerCurve = .continuous
             glass.layer?.masksToBounds = true
             glass.contentView = hostingView
@@ -639,9 +639,20 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     func menuDidClose(_ menu: NSMenu) {
+        setHighlightedDeviceItem(nil)
         // Detach so the next status-item click routes to `statusItemClicked`
         // rather than re-opening the menu automatically.
         statusItem.menu = nil
+    }
+
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        setHighlightedDeviceItem(item)
+    }
+
+    private func setHighlightedDeviceItem(_ highlightedItem: NSMenuItem?) {
+        for item in menu.items {
+            (item.view as? DeviceMenuItemView)?.setMenuHighlighted(item === highlightedItem)
+        }
     }
 }
 
@@ -695,9 +706,9 @@ private final class DeviceStatusIconView: NSView {
 
     init(frame: NSRect, usesAccentColor: Bool, accessibilityDescription: String) {
         self.usesAccentColor = usesAccentColor
-        imageView = NSImageView(frame: frame.insetBy(dx: 8, dy: 8))
+        imageView = NSImageView(frame: frame.insetBy(dx: 6, dy: 6))
         super.init(frame: frame)
-        imageView.frame.origin = NSPoint(x: 8, y: 8)
+        imageView.frame.origin = NSPoint(x: 6, y: 6)
         imageView.image = NSImage(systemSymbolName: "appletv.fill", accessibilityDescription: accessibilityDescription)
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.contentTintColor = .white
@@ -716,11 +727,9 @@ private final class DeviceMenuItemView: NSView {
     var onAction: (() -> Void)?
     private let closesMenuOnAction: Bool
     private let nameLabel: NSTextField
-    private let detailLabel: NSTextField
     private let shortcutLabel: NSTextField
-    private var isHovered = false
+    private var isMenuHighlighted = false
     private var isPressed = false
-    private var trackingArea: NSTrackingArea?
 
     init(
         frame: NSRect,
@@ -730,14 +739,13 @@ private final class DeviceMenuItemView: NSView {
     ) {
         self.closesMenuOnAction = closesMenuOnAction
         nameLabel = NSTextField(labelWithString: deviceName)
-        detailLabel = NSTextField(labelWithString: state.detail)
         shortcutLabel = NSTextField(labelWithString: "")
         super.init(frame: frame)
 
         setAccessibilityLabel("\(deviceName), \(state.detail)")
         setAccessibilityRole(.button)
 
-        let iconSize: CGFloat = 32
+        let iconSize: CGFloat = 28
         let icon = DeviceStatusIconView(
             frame: NSRect(x: 10, y: (bounds.height - iconSize) / 2, width: iconSize, height: iconSize),
             usesAccentColor: state.usesAccentColor,
@@ -748,19 +756,13 @@ private final class DeviceMenuItemView: NSView {
         let textX = icon.frame.maxX + 10
         nameLabel.font = .menuFont(ofSize: 0)
         nameLabel.lineBreakMode = .byTruncatingTail
-        nameLabel.frame = NSRect(x: textX, y: 25, width: 150, height: 17)
+        nameLabel.frame = NSRect(x: textX, y: (bounds.height - 17) / 2, width: 150, height: 17)
         addSubview(nameLabel)
-
-        detailLabel.font = .systemFont(ofSize: 11)
-        detailLabel.textColor = .secondaryLabelColor
-        detailLabel.lineBreakMode = .byTruncatingTail
-        detailLabel.frame = NSRect(x: textX, y: 8, width: 150, height: 14)
-        addSubview(detailLabel)
 
         shortcutLabel.font = .menuFont(ofSize: 11)
         shortcutLabel.textColor = .tertiaryLabelColor
         shortcutLabel.alignment = .right
-        shortcutLabel.frame = NSRect(x: 202, y: 17, width: 46, height: 16)
+        shortcutLabel.frame = NSRect(x: 202, y: (bounds.height - 16) / 2, width: 46, height: 16)
         addSubview(shortcutLabel)
     }
 
@@ -771,28 +773,9 @@ private final class DeviceMenuItemView: NSView {
         shortcutLabel.textColor = isError ? .systemRed : .tertiaryLabelColor
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovered = true
-        updateContentColors()
-        needsDisplay = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        isPressed = false
+    func setMenuHighlighted(_ highlighted: Bool) {
+        isMenuHighlighted = highlighted
+        if !highlighted { isPressed = false }
         updateContentColors()
         needsDisplay = true
     }
@@ -818,17 +801,15 @@ private final class DeviceMenuItemView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard isHovered || isPressed else { return }
-        NSColor.selectedContentBackgroundColor.setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 1), xRadius: 5, yRadius: 5).fill()
+        guard isMenuHighlighted || isPressed else { return }
+        (isPressed ? NSColor.selectedContentBackgroundColor : NSColor.unemphasizedSelectedContentBackgroundColor).setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 6, yRadius: 6).fill()
     }
 
     private func updateContentColors() {
-        let highlighted = isHovered || isPressed
-        nameLabel.textColor = highlighted ? .selectedMenuItemTextColor : .labelColor
-        detailLabel.textColor = highlighted ? .selectedMenuItemTextColor.withAlphaComponent(0.8) : .secondaryLabelColor
+        nameLabel.textColor = isPressed ? .selectedMenuItemTextColor : .labelColor
         if shortcutLabel.textColor != .systemRed {
-            shortcutLabel.textColor = highlighted ? .selectedMenuItemTextColor.withAlphaComponent(0.7) : .tertiaryLabelColor
+            shortcutLabel.textColor = isPressed ? .selectedMenuItemTextColor.withAlphaComponent(0.7) : .tertiaryLabelColor
         }
     }
 }
