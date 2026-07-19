@@ -42,5 +42,21 @@ jobs:
             -project itsytv.xcodeproj \
             -scheme itsytv \
             -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             test
+
+      - name: Package app
+        working-directory: itsytv-macos
+        run: |
+          mkdir -p artifacts
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/Build/Products/Debug/Itsytv.app \
+            artifacts/Itsytv-macOS-26.zip
+
+      - name: Upload app
+        uses: actions/upload-artifact@v7
+        with:
+          name: Itsytv-macOS-26
+          path: itsytv-macos/artifacts/Itsytv-macOS-26.zip
+          if-no-files-found: error
