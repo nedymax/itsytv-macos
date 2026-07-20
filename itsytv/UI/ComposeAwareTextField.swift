@@ -9,6 +9,7 @@ struct ComposeAwareTextField: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String = ""
     var usesSearchField = false
+    var requestsInitialFocus = false
     var onCommittedTextChange: (String) -> Void
     var onSubmit: () -> Void
 
@@ -32,10 +33,11 @@ struct ComposeAwareTextField: NSViewRepresentable {
         field.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
         field.cell?.lineBreakMode = .byTruncatingTail
         field.delegate = context.coordinator
-        // Auto-focus on appear
-        DispatchQueue.main.async {
-            NSApp.activate(ignoringOtherApps: true)
-            field.window?.makeFirstResponder(field)
+        if requestsInitialFocus {
+            DispatchQueue.main.async {
+                NSApp.activate(ignoringOtherApps: true)
+                field.window?.makeFirstResponder(field)
+            }
         }
         return field
     }

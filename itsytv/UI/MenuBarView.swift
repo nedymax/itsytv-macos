@@ -28,6 +28,7 @@ struct RemoteControlView: View {
                 Text(manager.connectedDeviceName ?? "Apple TV")
                     .font(.subheadline)
                     .lineLimit(1)
+                    .padding(.leading, 4)
                 Spacer()
                 PanelMenuButton(deviceID: manager.connectedDeviceID ?? "") {
                     if let deviceID = manager.connectedDeviceID {
@@ -68,7 +69,7 @@ struct RemoteControlView: View {
                     options: RemoteTab.allCases.map { ($0, $0.rawValue) }
                 )
                 .frame(height: 48)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 12)
 
                 // Keyboard text input (pushes content down when visible)
                 if showingKeyboard && selectedTab == .remote {
@@ -76,6 +77,7 @@ struct RemoteControlView: View {
                         text: $keyboardText,
                         placeholder: "Type to search...",
                         usesSearchField: true,
+                        requestsInitialFocus: true,
                         onCommittedTextChange: { committed in
                             manager.updateRemoteText(committed)
                         },
@@ -137,7 +139,7 @@ struct RemoteControlView: View {
                                 manager.pressButton(.pageDown, action: .hold)
                             }
                         }
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 12)
                     }
                 }
             }

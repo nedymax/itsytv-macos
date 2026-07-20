@@ -210,7 +210,8 @@ private struct RemoteControlSurfaceModifier<S: Shape>: ViewModifier {
         #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             content
-                .glassEffect(.regular.tint(color).interactive(), in: shape)
+                .background(shape.fill(color))
+                .glassEffect(.clear.interactive(), in: shape)
         } else {
             content
                 .background(shape.fill(color))
