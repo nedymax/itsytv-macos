@@ -28,6 +28,11 @@ final class ShellStateTests: XCTestCase {
         XCTAssertTrue(VersionComparison.isNewer("1.7.0-beta.1", than: "1.6.9"))
     }
 
+    func testUpdateCheckerUsesForkReleases() {
+        XCTAssertEqual(UpdateChecker.releasesAPIURL.host, "api.github.com")
+        XCTAssertEqual(UpdateChecker.releasesAPIURL.path, "/repos/nedymax/itsytv-macos/releases/latest")
+    }
+
     func testRemoteButtonReleaseOutsideCancelsClick() {
         XCTAssertFalse(RemoteButtonTracking.shouldFireClick(holdFired: false, releasedInside: false))
         XCTAssertFalse(RemoteButtonTracking.shouldFireClick(holdFired: true, releasedInside: true))

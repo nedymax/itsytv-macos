@@ -6,14 +6,17 @@ private let log = Logger(subsystem: "com.itsytv.app", category: "UpdateChecker")
 
 enum UpdateChecker {
 
+    static let releasesAPIURL = URL(
+        string: "https://api.github.com/repos/nedymax/itsytv-macos/releases/latest"
+    )!
+
     private struct Release: Decodable {
         let tag_name: String
         let html_url: String
     }
 
     static func check() {
-        let url = URL(string: "https://api.github.com/repos/nickustinov/itsytv-macos/releases/latest")!
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: releasesAPIURL)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
 
         URLSession.shared.dataTask(with: request) { data, response, error in
