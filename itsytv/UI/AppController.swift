@@ -22,6 +22,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private var lastAlwaysOnTopValue: Bool?
     private var pendingOpenTimeoutWorkItem: DispatchWorkItem?
     private var isReconfiguringPanel = false
+    private var isDismissingPanel = false
 
     init(manager: AppleTVManager, iconLoader: AppIconLoader) {
         self.manager = manager
@@ -48,6 +49,7 @@ final class AppController: NSObject, NSMenuDelegate {
         panel?.close()
         panel = nil
         panelDeviceID = nil
+        isDismissingPanel = false
     }
 
     private func setupHotkeyHandler() {
@@ -401,6 +403,9 @@ final class AppController: NSObject, NSMenuDelegate {
             defer: false
         )
         panel.contentView = surface
+        panel.onRequestClose = { [weak self] in
+            self?.dismissPanel()
+        }
         panel.isFloatingPanel = alwaysOnTop
         lastAlwaysOnTopValue = alwaysOnTop
         panel.level = alwaysOnTop ? .statusBar : .normal
@@ -411,10 +416,24 @@ final class AppController: NSObject, NSMenuDelegate {
         panel.backgroundColor = .clear
         panel.isReleasedWhenClosed = false
         panel.delegate = self
+        panel.animationBehavior = .none
+        panel.alphaValue = 0
+        // Match system popovers: retain AppKit's soft window shadow. The glass
+        // surface itself supplies the rounded edge treatment.
         panel.hasShadow = true
 
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+
+        let fadeDuration = panelFadeDuration
+        if fadeDuration == 0 {
+            panel.alphaValue = 1
+        } else {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = fadeDuration
+                panel.animator().alphaValue = 1
+            }
+        }
 
         // Position after makeKeyAndOrderFront — AppKit constrains the
         // frame during ordering for .statusBar level panels, so we must
@@ -473,10 +492,6 @@ final class AppController: NSObject, NSMenuDelegate {
             let glass = NSGlassEffectView(frame: hostingView.frame)
             glass.style = .regular
             glass.cornerRadius = panelCornerRadius
-            glass.wantsLayer = true
-            glass.layer?.cornerRadius = panelCornerRadius
-            glass.layer?.cornerCurve = .continuous
-            glass.layer?.masksToBounds = true
             glass.contentView = hostingView
             return glass
         }
@@ -501,17 +516,52 @@ final class AppController: NSObject, NSMenuDelegate {
     }
 
     private func dismissPanel() {
-        guard let panel else { return }
+        guard let panel, !isDismissingPanel else { return }
+        isDismissingPanel = true
         removeKeyboardMonitor()
         if let observer = alwaysOnTopObserver {
             NotificationCenter.default.removeObserver(observer)
             alwaysOnTopObserver = nil
         }
         savePanelPosition()
+        panel.ignoresMouseEvents = true
+
+        let fadeDuration = panelFadeDuration
+        guard fadeDuration > 0 else {
+            finishPanelDismissal(panel)
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = fadeDuration
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak self, weak panel] in
+            DispatchQueue.main.async {
+                guard let self, let panel else { return }
+                self.finishPanelDismissal(panel)
+            }
+        }
+    }
+
+    private var panelFadeDuration: TimeInterval {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.14
+    }
+
+    private func finishPanelDismissal(_ panel: NSPanel) {
+        guard self.panel === panel else {
+            isDismissingPanel = false
+            return
+        }
+
+        // Hide the complete composited window before changing connection state;
+        // otherwise SwiftUI redraws the glass while it is still fading onscreen.
+        panel.orderOut(nil)
+        panel.delegate = nil
+        panel.close()
         self.panel = nil
         panelDeviceID = nil
         lastAlwaysOnTopValue = nil
-        panel.close()
+        isDismissingPanel = false
         if manager.connectionStatus != .disconnected {
             manager.disconnect()
         }
@@ -819,6 +869,8 @@ private final class DeviceMenuItemView: NSView {
 // MARK: - Key-capable panel
 
 private final class KeyablePanel: NSPanel {
+    var onRequestClose: (() -> Void)?
+
     override var canBecomeKey: Bool { true }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -827,7 +879,7 @@ private final class KeyablePanel: NSPanel {
         }
         switch event.charactersIgnoringModifiers {
         case "w":
-            performClose(nil)
+            onRequestClose?()
             return true
         case "h":
             NSApp.hide(nil)
