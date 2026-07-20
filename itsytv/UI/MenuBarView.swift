@@ -139,7 +139,10 @@ struct RemoteControlView: View {
                                 manager.pressButton(.pageDown, action: .hold)
                             }
                         }
-                        .padding(.horizontal, 12)
+                        // Native circular glass draws slightly outside its layout
+                        // frame. Compensate so the visible bezels align with the
+                        // segmented control above, whose content inset is 12 pt.
+                        .padding(.horizontal, 16)
                     }
                 }
             }
@@ -946,7 +949,11 @@ struct DPadView: View {
             // Center select button — larger, subtly distinct from outer ring
             Color.clear
                 .frame(width: size * 0.5, height: size * 0.5)
-                .remoteControlSurface(color: DS.Colors.remoteButtonCenter, in: Circle())
+                .remoteControlSurface(
+                    color: DS.Colors.remoteButtonCenter,
+                    in: Circle(),
+                    usesGlass: false
+                )
                 .overlay(
                     RemoteButtonGesture(
                         onInput: { action in press(.select, action) },
