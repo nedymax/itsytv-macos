@@ -422,18 +422,7 @@ final class AppController: NSObject, NSMenuDelegate {
         // surface itself supplies the rounded edge treatment.
         panel.hasShadow = true
 
-        NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
-
-        let fadeDuration = panelFadeDuration
-        if fadeDuration == 0 {
-            panel.alphaValue = 1
-        } else {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = fadeDuration
-                panel.animator().alphaValue = 1
-            }
-        }
 
         // Position after makeKeyAndOrderFront — AppKit constrains the
         // frame during ordering for .statusBar level panels, so we must
@@ -447,6 +436,13 @@ final class AppController: NSObject, NSMenuDelegate {
             panel.setFrameOrigin(origin)
         }
 
+        // Let AppKit establish the glass backdrop, final frame, and rounded
+        // shadow before exposing the window. Fading while NSGlassEffectView is
+        // performing its first composition produces a bright transient frame.
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.contentView?.displayIfNeeded()
+        panel.invalidateShadow()
+
         // Do not assign initial keyboard focus to the first SwiftUI control.
         // The normal key-view loop remains available as soon as the user presses Tab.
         DispatchQueue.main.async { [weak panel] in
@@ -456,6 +452,24 @@ final class AppController: NSObject, NSMenuDelegate {
         self.panel = panel
         self.panelDeviceID = manager.connectedDeviceID
         installKeyboardMonitor()
+
+        DispatchQueue.main.async { [weak self, weak panel] in
+            guard let self, let panel, self.panel === panel else { return }
+            panel.contentView?.layoutSubtreeIfNeeded()
+            panel.contentView?.displayIfNeeded()
+            panel.invalidateShadow()
+
+            let fadeDuration = self.panelFadeDuration
+            if fadeDuration == 0 {
+                panel.alphaValue = 1
+            } else {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = fadeDuration
+                    context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    panel.animator().alphaValue = 1
+                }
+            }
+        }
 
         // Observe "Always on top" toggle changes while panel is open
         alwaysOnTopObserver = NotificationCenter.default.addObserver(
@@ -473,8 +487,8 @@ final class AppController: NSObject, NSMenuDelegate {
                 panel.level = onTop ? .statusBar : .normal
                 panel.styleMask = onTop ? [.nonactivatingPanel] : [.borderless]
                 panel.orderOut(nil)
-                NSApp.activate(ignoringOtherApps: true)
                 panel.makeKeyAndOrderFront(nil)
+                panel.invalidateShadow()
                 DispatchQueue.main.async { [weak self] in
                     self?.isReconfiguringPanel = false
                 }
@@ -492,6 +506,10 @@ final class AppController: NSObject, NSMenuDelegate {
             let glass = NSGlassEffectView(frame: hostingView.frame)
             glass.style = .regular
             glass.cornerRadius = panelCornerRadius
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = panelCornerRadius
+            glass.layer?.cornerCurve = .continuous
+            glass.layer?.masksToBounds = true
             glass.contentView = hostingView
             return glass
         }
