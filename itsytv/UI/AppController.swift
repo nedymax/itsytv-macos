@@ -459,31 +459,30 @@ final class AppController: NSObject, NSMenuDelegate {
         panel.backgroundColor = .clear
         panel.isReleasedWhenClosed = false
         panel.delegate = self
-        panel.animationBehavior = .utilityWindow
+        panel.animationBehavior = .none
+        panel.alphaValue = 0
         // Match system popovers: retain AppKit's soft window shadow. The glass
         // surface itself supplies the rounded edge treatment.
         panel.hasShadow = true
 
-        let resolvedOrigin = PanelPositioning.resolvedOrigin(
+        panel.makeKeyAndOrderFront(nil)
+
+        // AppKit constrains status-bar-level panels while ordering them. Resolve
+        // and restore the position only after the window is on screen, while it
+        // is still transparent, so no offscreen movement is exposed.
+        if let origin = PanelPositioning.resolvedOrigin(
             savedOrigin: savedPanelOrigin(panelHeight: panel.frame.height),
             panelSize: panel.frame.size,
             visibleFrames: NSScreen.screens.map(\.visibleFrame),
             statusItemFrame: statusItem.button?.window?.frame
-        )
-        if let origin = resolvedOrigin {
+        ) {
             panel.setFrameOrigin(origin)
         }
 
         panel.contentView?.layoutSubtreeIfNeeded()
         panel.contentView?.displayIfNeeded()
-        panel.makeKeyAndOrderFront(nil)
-
-        // AppKit may constrain status-bar-level windows while ordering them.
-        // Reassert the resolved origin before refreshing the rounded shadow.
-        if let origin = resolvedOrigin {
-            panel.setFrameOrigin(origin)
-        }
         panel.invalidateShadow()
+        panel.alphaValue = 1
 
         // Do not assign initial keyboard focus to the first SwiftUI control.
         // The normal key-view loop remains available as soon as the user presses Tab.
