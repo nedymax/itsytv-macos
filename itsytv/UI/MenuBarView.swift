@@ -22,13 +22,12 @@ struct RemoteControlView: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 6) {
             // Header — always interactive
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 Text(manager.connectedDeviceName ?? "Apple TV")
                     .font(.subheadline)
                     .lineLimit(1)
-                    .padding(.leading, 16)
                 Spacer()
                 PanelMenuButton(deviceID: manager.connectedDeviceID ?? "") {
                     if let deviceID = manager.connectedDeviceID {
@@ -62,14 +61,14 @@ struct RemoteControlView: View {
             }
 
             // Controls — dimmed while connecting
-            VStack(spacing: 10) {
+            VStack(spacing: 6) {
                 // Tab picker
                 NativeSegmentPicker(
                     selection: $selectedTab,
                     options: RemoteTab.allCases.map { ($0, $0.rawValue) }
                 )
                 .frame(height: 48)
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 8)
 
                 // Keyboard text input (pushes content down when visible)
                 if showingKeyboard && selectedTab == .remote {
@@ -138,7 +137,7 @@ struct RemoteControlView: View {
                                 manager.pressButton(.pageDown, action: .hold)
                             }
                         }
-                        .padding(.horizontal, 24)
+                        .padding(.horizontal, 8)
                     }
                 }
             }
@@ -496,7 +495,7 @@ struct RemoteTabContent: View {
 
         }
         .padding(.horizontal, padding)
-        .padding(.bottom, 12)
+        .padding(.bottom, 22)
     }
 }
 
@@ -720,20 +719,24 @@ enum RemoteButtonTracking {
 
 private struct RemoteButtonGesture: NSViewRepresentable {
     let onInput: (InputAction) -> Void
+    var onPressingChanged: (Bool) -> Void = { _ in }
 
     func makeNSView(context: Context) -> RemoteButtonGestureNSView {
         let view = RemoteButtonGestureNSView()
         view.onInput = onInput
+        view.onPressingChanged = onPressingChanged
         return view
     }
 
     func updateNSView(_ nsView: RemoteButtonGestureNSView, context: Context) {
         nsView.onInput = onInput
+        nsView.onPressingChanged = onPressingChanged
     }
 }
 
 private class RemoteButtonGestureNSView: NSView {
     var onInput: ((InputAction) -> Void)?
+    var onPressingChanged: ((Bool) -> Void)?
     private var holdTimer: Timer?
     private var holdFired = false
 
@@ -741,6 +744,7 @@ private class RemoteButtonGestureNSView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         holdFired = false
+        onPressingChanged?(true)
         holdTimer?.invalidate()
         holdTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
             guard let self else { return }
@@ -752,6 +756,7 @@ private class RemoteButtonGestureNSView: NSView {
     override func mouseUp(with event: NSEvent) {
         holdTimer?.invalidate()
         holdTimer = nil
+        onPressingChanged?(false)
         let releasedInside = bounds.contains(convert(event.locationInWindow, from: nil))
         guard RemoteButtonTracking.shouldFireClick(holdFired: holdFired, releasedInside: releasedInside) else { return }
         onInput?(.click)
@@ -761,6 +766,7 @@ private class RemoteButtonGestureNSView: NSView {
         if !bounds.contains(convert(event.locationInWindow, from: nil)) {
             holdTimer?.invalidate()
             holdTimer = nil
+            onPressingChanged?(false)
         }
     }
 
@@ -769,6 +775,7 @@ private class RemoteButtonGestureNSView: NSView {
         if window == nil {
             holdTimer?.invalidate()
             holdTimer = nil
+            onPressingChanged?(false)
         }
     }
 }
@@ -914,6 +921,7 @@ struct DPadView: View {
     let onPress: (CompanionButton, InputAction) -> Void
     let size: CGFloat
     @State private var blinkOpacity: Double = 0
+    @State private var isPressed = false
 
     private static let dpadButtons: Set<CompanionButton> = [.up, .down, .left, .right, .select]
 
@@ -923,46 +931,76 @@ struct DPadView: View {
     }
 
     private func blink() {
-        blinkOpacity = 0.25
-        withAnimation(.easeOut(duration: 0.2)) { blinkOpacity = 0 }
+        blinkOpacity = 0.12
+        withAnimation(.easeOut(duration: 0.15)) { blinkOpacity = 0 }
     }
 
     var body: some View {
         ZStack {
-            Circle()
-                .fill(Color(nsColor: DS.Colors.remoteButton))
+            Color.clear
                 .frame(width: size, height: size)
+                .remoteControlSurface(color: DS.Colors.remoteButton, in: Circle())
 
             // Center select button — larger, subtly distinct from outer ring
-            Circle()
-                .fill(Color(nsColor: DS.Colors.remoteButtonCenter))
+            Color.clear
                 .frame(width: size * 0.5, height: size * 0.5)
-                .overlay(RemoteButtonGesture { action in press(.select, action) })
+                .remoteControlSurface(color: DS.Colors.remoteButtonCenter, in: Circle())
+                .overlay(
+                    RemoteButtonGesture(
+                        onInput: { action in press(.select, action) },
+                        onPressingChanged: { isPressed = $0 }
+                    )
+                )
                 .help("Return")
                 .accessibilityElement()
                 .accessibilityLabel("Select")
 
             // Direction dots
             VStack {
-                DPadDot(accessibilityLabel: "Up", shortcut: "↑") { action in press(.up, action) }
+                DPadDot(
+                    accessibilityLabel: "Up",
+                    shortcut: "↑",
+                    onPressingChanged: { isPressed = $0 }
+                ) { action in
+                    press(.up, action)
+                }
                 Spacer()
-                DPadDot(accessibilityLabel: "Down", shortcut: "↓") { action in press(.down, action) }
+                DPadDot(
+                    accessibilityLabel: "Down",
+                    shortcut: "↓",
+                    onPressingChanged: { isPressed = $0 }
+                ) { action in
+                    press(.down, action)
+                }
             }
             .frame(height: size)
             .padding(.vertical, 12)
 
             HStack {
-                DPadDot(accessibilityLabel: "Left", shortcut: "←") { action in press(.left, action) }
+                DPadDot(
+                    accessibilityLabel: "Left",
+                    shortcut: "←",
+                    onPressingChanged: { isPressed = $0 }
+                ) { action in
+                    press(.left, action)
+                }
                 Spacer()
-                DPadDot(accessibilityLabel: "Right", shortcut: "→") { action in press(.right, action) }
+                DPadDot(
+                    accessibilityLabel: "Right",
+                    shortcut: "→",
+                    onPressingChanged: { isPressed = $0 }
+                ) { action in
+                    press(.right, action)
+                }
             }
             .frame(width: size)
             .padding(.horizontal, 12)
 
             Circle()
-                .fill(.white.opacity(blinkOpacity))
+                .fill(.white.opacity(isPressed ? 0.12 : blinkOpacity))
                 .frame(width: size, height: size)
                 .allowsHitTesting(false)
+                .animation(.easeOut(duration: 0.12), value: isPressed)
         }
         // Swipe over the pad (trackpad / Magic Mouse) streams as a touch,
         // matching iOS. Hit testing stays off so button clicks pass through.
@@ -983,6 +1021,7 @@ struct DPadView: View {
 struct DPadDot: View {
     let accessibilityLabel: String
     let shortcut: String
+    var onPressingChanged: (Bool) -> Void = { _ in }
     let action: (InputAction) -> Void
 
     var body: some View {
@@ -990,7 +1029,7 @@ struct DPadDot: View {
             .fill(Color(nsColor: DS.Colors.remoteButtonForeground))
             .frame(width: 5, height: 5)
             .frame(width: 30, height: 30)
-            .overlay(RemoteButtonGesture(onInput: action))
+            .overlay(RemoteButtonGesture(onInput: action, onPressingChanged: onPressingChanged))
             .help(shortcut)
             .accessibilityElement()
             .accessibilityLabel(Text(accessibilityLabel))
@@ -1006,6 +1045,7 @@ struct RemoteCircleButton: View {
     let size: CGFloat
     let action: (InputAction) -> Void
     @State private var blinkOpacity: Double = 0
+    @State private var isPressed = false
 
     private func press(_ input: InputAction) {
         blink()
@@ -1013,8 +1053,8 @@ struct RemoteCircleButton: View {
     }
 
     private func blink() {
-        blinkOpacity = 0.25
-        withAnimation(.easeOut(duration: 0.2)) { blinkOpacity = 0 }
+        blinkOpacity = 0.12
+        withAnimation(.easeOut(duration: 0.15)) { blinkOpacity = 0 }
     }
 
     var body: some View {
@@ -1023,9 +1063,15 @@ struct RemoteCircleButton: View {
             .foregroundStyle(Color(nsColor: DS.Colors.remoteButtonForeground))
             .frame(width: size * 0.33, height: size * 0.33)
             .frame(width: size, height: size)
-            .background(Circle().fill(Color(nsColor: DS.Colors.remoteButton)))
-            .overlay(Circle().fill(.white.opacity(blinkOpacity)).allowsHitTesting(false))
-            .overlay(RemoteButtonGesture { input in press(input) })
+            .remoteControlSurface(color: DS.Colors.remoteButton, in: Circle())
+            .overlay(Circle().fill(.white.opacity(isPressed ? 0.12 : blinkOpacity)).allowsHitTesting(false))
+            .overlay(
+                RemoteButtonGesture(
+                    onInput: { input in press(input) },
+                    onPressingChanged: { isPressed = $0 }
+                )
+            )
+            .animation(.easeOut(duration: 0.12), value: isPressed)
             .help(shortcut)
             .accessibilityElement()
             .accessibilityLabel(Text(accessibilityLabel))
@@ -1044,8 +1090,8 @@ struct VolumePill: View {
     @State private var blinkOpacity: Double = 0
 
     private func blink() {
-        blinkOpacity = 0.25
-        withAnimation(.easeOut(duration: 0.2)) { blinkOpacity = 0 }
+        blinkOpacity = 0.12
+        withAnimation(.easeOut(duration: 0.15)) { blinkOpacity = 0 }
     }
 
     var body: some View {
@@ -1057,7 +1103,7 @@ struct VolumePill: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(RemoteVolumeButtonStyle())
             .help("+")
             .accessibilityLabel("Volume up")
 
@@ -1068,12 +1114,12 @@ struct VolumePill: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(RemoteVolumeButtonStyle())
             .help("−")
             .accessibilityLabel("Volume down")
         }
         .frame(width: width, height: height)
-        .background(Capsule().fill(Color(nsColor: DS.Colors.remoteButton)))
+        .remoteControlSurface(color: DS.Colors.remoteButton, in: Capsule())
         .overlay(Capsule().fill(.white.opacity(blinkOpacity)).allowsHitTesting(false))
         .clipShape(Capsule())
         .onChange(of: manager.keyboardBlinkCounter) { _, _ in
@@ -1081,6 +1127,14 @@ struct VolumePill: View {
                 blink()
             }
         }
+    }
+}
+
+private struct RemoteVolumeButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(.white.opacity(configuration.isPressed ? 0.12 : 0))
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
