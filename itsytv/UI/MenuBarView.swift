@@ -169,7 +169,7 @@ struct RemoteControlView: View {
             }
         }
         .onAppear {
-            // The panel is created while the status is already `.connecting`, so
+            // The popover is created while the status is already `.connecting`, so
             // `onChange` never sees that initial value — arm the hint here too so
             // a stuck connection reliably surfaces the unpair option.
             if !isConnected { scheduleUnpairHint() }

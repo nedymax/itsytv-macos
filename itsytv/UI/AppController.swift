@@ -57,14 +57,10 @@ final class AppController: NSObject, NSMenuDelegate {
     private let iconLoader: AppIconLoader
     private let keyboardHighlight = RemoteKeyboardHighlightState()
     private var observation: AnyCancellable?
-    private var panel: NSPanel?
-    private var panelDeviceID: String?
+    private var popover: NSPopover?
+    private var popoverDeviceID: String?
     private var keyboardMonitor: Any?
-    private var alwaysOnTopObserver: NSObjectProtocol?
-    private var lastAlwaysOnTopValue: Bool?
     private var pendingOpenTimeoutWorkItem: DispatchWorkItem?
-    private var isReconfiguringPanel = false
-    private var isDismissingPanel = false
 
     init(manager: AppleTVManager, iconLoader: AppIconLoader) {
         self.manager = manager
@@ -79,27 +75,23 @@ final class AppController: NSObject, NSMenuDelegate {
 
     func cleanup() {
         removeKeyboardMonitor()
-        if let observer = alwaysOnTopObserver {
-            NotificationCenter.default.removeObserver(observer)
-            alwaysOnTopObserver = nil
-        }
         observation?.cancel()
         observation = nil
         pendingOpenTimeoutWorkItem?.cancel()
         pendingOpenTimeoutWorkItem = nil
         HotkeyManager.shared.unregisterAll()
-        panel?.close()
-        panel = nil
-        panelDeviceID = nil
-        isDismissingPanel = false
+        popover?.delegate = nil
+        popover?.close()
+        popover = nil
+        popoverDeviceID = nil
     }
 
     private func setupHotkeyHandler() {
         HotkeyManager.shared.reregisterAll()
         HotkeyManager.shared.onHotkeyPressed = { [weak self] deviceID in
             guard let self else { return }
-            if self.panel?.isVisible == true && self.panelDeviceID == deviceID {
-                self.dismissPanel()
+            if self.popover?.isShown == true && self.popoverDeviceID == deviceID {
+                self.dismissPopover()
             } else {
                 self.openRemote(for: deviceID)
             }
@@ -145,7 +137,7 @@ final class AppController: NSObject, NSMenuDelegate {
     private func connectAndShow(_ device: AppleTVDevice) {
         manager.connect(to: device)
         if KeychainStorage.load(for: device.id) != nil {
-            showPanel()
+            showPopover()
         }
     }
 
@@ -179,7 +171,7 @@ final class AppController: NSObject, NSMenuDelegate {
         // Everything else (remote open, right-click, no/unreachable last device)
         // falls back to the dropdown, as before.
         if !wantsMenu,
-           panel?.isVisible != true,
+           popover?.isShown != true,
            case .disconnected = manager.connectionStatus,
            let lastID = manager.lastConnectedDeviceID,
            KeychainStorage.load(for: lastID) != nil,
@@ -231,13 +223,12 @@ final class AppController: NSObject, NSMenuDelegate {
 
         switch currentStatus {
         case .disconnected:
-            // A transient connection loss must not dismiss an active remote.
-            // The panel follows normal popover behavior and closes when focus
-            // moves outside it or when the user explicitly closes it.
+            // A transient connection loss must not dismiss the active popover.
+            // It closes through normal NSPopover dismissal or its close button.
             rebuildMenu()
         case .connecting:
-            if panel != nil {
-                // Panel already open — SwiftUI will update content
+            if popover != nil {
+                // Popover already open — SwiftUI will update content
             } else {
                 rebuildMenu()
             }
@@ -245,7 +236,7 @@ final class AppController: NSObject, NSMenuDelegate {
             rebuildMenu()
         case .connected:
             menu.cancelTracking()
-            showPanel()
+            showPopover()
         }
     }
 
@@ -270,7 +261,7 @@ final class AppController: NSObject, NSMenuDelegate {
         case .disconnected:
             buildDeviceList()
         case .connecting:
-            if panel != nil { return }
+            if popover != nil { return }
             let item = NSMenuItem(title: "Connecting...", action: nil, keyEquivalent: "")
             item.image = menuSymbol(named: "arrow.triangle.2.circlepath", accessibilityDescription: "Connecting")
             item.isEnabled = false
@@ -418,243 +409,56 @@ final class AppController: NSObject, NSMenuDelegate {
         return image
     }
 
-    // MARK: - Panel
+    // MARK: - Popover
 
-    private func showPanel() {
-        if panel != nil {
-            return
-        }
+    private func showPopover() {
+        guard popover == nil, let statusButton = statusItem.button else { return }
 
-        let panelContent = PanelContentView { [weak self] in
-            self?.dismissPanel()
+        let content = PanelContentView { [weak self] in
+            self?.dismissPopover()
         }
             .environment(manager)
             .environment(iconLoader)
             .environment(keyboardHighlight)
 
-        let hostingView = NSHostingView(rootView: panelContent)
-        hostingView.safeAreaRegions = []
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        let hostingController = NSHostingController(rootView: content)
+        hostingController.sizingOptions = [.preferredContentSize]
 
-        let surface = makePanelSurface(hostingView: hostingView)
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        popover.contentViewController = hostingController
+        popover.delegate = self
 
-        let alwaysOnTop = UserDefaults.standard.object(forKey: "alwaysOnTop") as? Bool ?? true
-        let panel = KeyablePanel(
-            contentRect: NSRect(x: 0, y: 0, width: 176, height: 400),
-            styleMask: alwaysOnTop ? [.nonactivatingPanel] : [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        panel.contentView = surface
-        panel.onRequestClose = { [weak self] in
-            self?.dismissPanel()
+        self.popover = popover
+        popoverDeviceID = manager.connectedDeviceID
+        popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
+
+        // Preserve the established behavior: opening the remote must not focus
+        // its first control. Tab and explicit text-entry actions still work.
+        DispatchQueue.main.async { [weak self, weak popover] in
+            guard self?.popover === popover else { return }
+            popover?.contentViewController?.view.window?.makeFirstResponder(nil)
         }
-        panel.isFloatingPanel = alwaysOnTop
-        lastAlwaysOnTopValue = alwaysOnTop
-        panel.level = alwaysOnTop ? .statusBar : .normal
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.fullScreenAuxiliary]
-        panel.isMovableByWindowBackground = true
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.isReleasedWhenClosed = false
-        panel.delegate = self
-        panel.animationBehavior = .none
-        panel.alphaValue = 0
-        // Match system popovers: retain AppKit's soft window shadow. The glass
-        // surface itself supplies the rounded edge treatment.
-        panel.hasShadow = true
-
-        panel.makeKeyAndOrderFront(nil)
-
-        // AppKit constrains status-bar-level panels while ordering them. Resolve
-        // and restore the position only after the window is on screen, while it
-        // is still transparent, so no offscreen movement is exposed.
-        if let origin = PanelPositioning.resolvedOrigin(
-            savedOrigin: savedPanelOrigin(panelHeight: panel.frame.height),
-            panelSize: panel.frame.size,
-            visibleFrames: NSScreen.screens.map(\.visibleFrame),
-            statusItemFrame: statusItem.button?.window?.frame
-        ) {
-            panel.setFrameOrigin(origin)
-        }
-
-        panel.contentView?.layoutSubtreeIfNeeded()
-        panel.contentView?.displayIfNeeded()
-        panel.invalidateShadow()
-        panel.alphaValue = 1
-
-        // Do not assign initial keyboard focus to the first SwiftUI control.
-        // The normal key-view loop remains available as soon as the user presses Tab.
-        DispatchQueue.main.async { [weak panel] in
-            panel?.makeFirstResponder(nil)
-        }
-
-        self.panel = panel
-        self.panelDeviceID = manager.connectedDeviceID
         installKeyboardMonitor()
-
-        // Observe "Always on top" toggle changes while panel is open
-        alwaysOnTopObserver = NotificationCenter.default.addObserver(
-            forName: UserDefaults.didChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, let panel = self.panel else { return }
-                let onTop = UserDefaults.standard.object(forKey: "alwaysOnTop") as? Bool ?? true
-                guard onTop != self.lastAlwaysOnTopValue else { return }
-                self.lastAlwaysOnTopValue = onTop
-                self.isReconfiguringPanel = true
-                panel.isFloatingPanel = onTop
-                panel.level = onTop ? .statusBar : .normal
-                panel.styleMask = onTop ? [.nonactivatingPanel] : [.borderless]
-                panel.orderOut(nil)
-                panel.makeKeyAndOrderFront(nil)
-                panel.invalidateShadow()
-                DispatchQueue.main.async { [weak self] in
-                    self?.isReconfiguringPanel = false
-                }
-            }
-        }
     }
 
-    private func makePanelSurface(hostingView: NSView) -> NSView {
-        let panelCornerRadius: CGFloat = 14
-        #if compiler(>=6.2)
-        if #available(macOS 26.0, *) {
-            hostingView.translatesAutoresizingMaskIntoConstraints = true
-            hostingView.frame = NSRect(x: 0, y: 0, width: 176, height: 400)
-            hostingView.autoresizingMask = [.width, .height]
-            let glass = NSGlassEffectView(frame: hostingView.frame)
-            glass.style = .regular
-            glass.cornerRadius = panelCornerRadius
-            glass.wantsLayer = true
-            glass.layer?.cornerRadius = panelCornerRadius
-            glass.layer?.cornerCurve = .continuous
-            glass.layer?.masksToBounds = true
-            glass.contentView = hostingView
-            return glass
-        }
-        #endif
-
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
-        let vibrancy = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 176, height: 400))
-        vibrancy.material = .popover
-        vibrancy.state = .active
-        vibrancy.wantsLayer = true
-        vibrancy.layer?.cornerRadius = panelCornerRadius
-        vibrancy.layer?.cornerCurve = .continuous
-        vibrancy.layer?.masksToBounds = true
-        vibrancy.addSubview(hostingView)
-        NSLayoutConstraint.activate([
-            hostingView.topAnchor.constraint(equalTo: vibrancy.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: vibrancy.bottomAnchor),
-            hostingView.leadingAnchor.constraint(equalTo: vibrancy.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: vibrancy.trailingAnchor),
-        ])
-        return vibrancy
-    }
-
-    private func dismissPanel() {
-        guard let panel, !isDismissingPanel else { return }
-        isDismissingPanel = true
+    private func dismissPopover() {
+        guard let popover else { return }
         removeKeyboardMonitor()
-        if let observer = alwaysOnTopObserver {
-            NotificationCenter.default.removeObserver(observer)
-            alwaysOnTopObserver = nil
-        }
-        savePanelPosition()
-        panel.ignoresMouseEvents = true
-
-        let fadeDuration = panelFadeDuration
-        guard fadeDuration > 0 else {
-            finishPanelDismissal(panel)
-            return
-        }
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = fadeDuration
-            panel.animator().alphaValue = 0
-        } completionHandler: { [weak self, weak panel] in
-            DispatchQueue.main.async {
-                guard let self, let panel else { return }
-                self.finishPanelDismissal(panel)
-            }
-        }
-    }
-
-    private var panelFadeDuration: TimeInterval {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.14
-    }
-
-    private func finishPanelDismissal(_ panel: NSPanel) {
-        guard self.panel === panel else {
-            isDismissingPanel = false
-            return
-        }
-
-        // Hide the complete composited window before changing connection state;
-        // otherwise SwiftUI redraws the glass while it is still fading onscreen.
-        panel.animationBehavior = .none
-        panel.orderOut(nil)
-        panel.delegate = nil
-        panel.close()
-        self.panel = nil
-        panelDeviceID = nil
-        lastAlwaysOnTopValue = nil
-        isDismissingPanel = false
-        if manager.connectionStatus != .disconnected {
-            manager.disconnect()
-        }
-    }
-
-    private func savePanelPosition() {
-        guard let frame = panel?.frame else {
-            log.debug("save: no panel frame")
-            return
-        }
-        guard let deviceID = panelDeviceID else {
-            log.debug("save: no panelDeviceID")
-            return
-        }
-        // Save top-left corner (x, maxY) — the visual anchor point.
-        // AppKit origin is bottom-left, but top-left stays stable
-        // regardless of panel height changes from SwiftUI layout.
-        let dict: [String: CGFloat] = ["x": frame.minX, "topY": frame.maxY]
-        UserDefaults.standard.set(dict, forKey: "panelOrigin_\(deviceID)")
-        log.info("save: topLeft (\(frame.minX), \(frame.maxY)) for device \(deviceID)")
-    }
-
-    private func savedPanelOrigin(panelHeight: CGFloat) -> NSPoint? {
-        guard let deviceID = manager.connectedDeviceID else {
-            log.debug("restore: no connectedDeviceID")
-            return nil
-        }
-        let key = "panelOrigin_\(deviceID)"
-        guard let dict = UserDefaults.standard.dictionary(forKey: key) else {
-            log.debug("restore: no saved value for key \(key)")
-            return nil
-        }
-        guard let x = dict["x"] as? CGFloat, let topY = dict["topY"] as? CGFloat else {
-            log.debug("restore: bad dict format: \(dict)")
-            return nil
-        }
-        // Convert top-left back to AppKit bottom-left origin
-        let origin = NSPoint(x: x, y: topY - panelHeight)
-        log.info("restore: topLeft (\(x), \(topY)) → origin (\(origin.x), \(origin.y)) for device \(deviceID)")
-        return origin
+        popover.performClose(nil)
     }
 
     private func installKeyboardMonitor() {
         removeKeyboardMonitor()
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
-            guard let self, let panel = self.panel,
+            guard let self,
+                  let window = self.popover?.contentViewController?.view.window,
                   PanelKeyboardRouting.shouldHandle(
-                    panelIsVisible: panel.isVisible,
-                    panelIsKey: panel.isKeyWindow,
-                    panelIsApplicationKeyWindow: NSApp.keyWindow === panel,
-                    eventTargetsPanel: event.window === panel
+                    panelIsVisible: self.popover?.isShown == true,
+                    panelIsKey: window.isKeyWindow,
+                    panelIsApplicationKeyWindow: NSApp.keyWindow === window,
+                    eventTargetsPanel: event.window === window
                   ) else { return event }
             if event.type == .keyUp {
                 if self.handleRemoteKeyUp(event) { return nil }
@@ -677,6 +481,12 @@ final class AppController: NSObject, NSMenuDelegate {
         // Cmd shortcuts work even when text input is focused
         if event.modifierFlags.contains(.command) {
             switch event.keyCode {
+            case 13: // Cmd+W
+                dismissPopover()
+                return true
+            case 4: // Cmd+H
+                NSApp.hide(nil)
+                return true
             case 40: // Cmd+K
                 manager.keyboardToggleCounter &+= 1
                 manager.triggerKeyboardBlink(.siri)
@@ -703,7 +513,7 @@ final class AppController: NSObject, NSMenuDelegate {
         }
 
         // Ignore when any text input is focused (field editor, NSTextField, or SwiftUI text)
-        if let responder = panel?.firstResponder {
+        if let responder = popover?.contentViewController?.view.window?.firstResponder {
             var r: NSResponder? = responder
             while let current = r {
                 if current is NSText || current is NSTextField { return false }
@@ -909,41 +719,15 @@ private final class DeviceMenuItemView: NSView {
     }
 }
 
-// MARK: - Key-capable panel
-
-private final class KeyablePanel: NSPanel {
-    var onRequestClose: (() -> Void)?
-
-    override var canBecomeKey: Bool { true }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else {
-            return super.performKeyEquivalent(with: event)
-        }
-        switch event.charactersIgnoringModifiers {
-        case "w":
-            onRequestClose?()
-            return true
-        case "h":
-            NSApp.hide(nil)
-            return true
-        default:
-            return super.performKeyEquivalent(with: event)
-        }
-    }
-}
-
 struct PanelMenuButton: View {
     let deviceID: String
     let onUnpair: () -> Void
-    @AppStorage("alwaysOnTop") private var alwaysOnTop = true
     @AppStorage("showAppsSearch") private var showAppsSearch = false
     @State private var showingHotkeyRecorder = false
     @State private var currentHotkey: ShortcutKeys?
 
     var body: some View {
         Menu {
-            Toggle("Always on top", isOn: $alwaysOnTop)
             Toggle("Show app search", isOn: $showAppsSearch)
                 .keyboardShortcut("f", modifiers: .command)
             Divider()
@@ -1165,28 +949,22 @@ struct PanelContentView: View {
     }
 }
 
-// MARK: - NSWindowDelegate
+// MARK: - NSPopoverDelegate
 
-extension AppController: NSWindowDelegate {
-    func windowDidResignKey(_ notification: Notification) {
-        guard (notification.object as? NSPanel) === panel,
-              !isReconfiguringPanel else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let panel = self.panel,
-                  !panel.isKeyWindow,
-                  !self.isReconfiguringPanel else { return }
-            self.dismissPanel()
-        }
+extension AppController: NSPopoverDelegate {
+    func popoverWillClose(_ notification: Notification) {
+        guard (notification.object as? NSPopover) === popover else { return }
+        removeKeyboardMonitor()
     }
 
-    func windowWillClose(_ notification: Notification) {
-        if (notification.object as? NSPanel) === panel {
-            savePanelPosition()
-            if manager.connectionStatus != .disconnected {
-                manager.disconnect()
-            }
-            panel = nil
-            panelDeviceID = nil
+    func popoverDidClose(_ notification: Notification) {
+        guard let closingPopover = notification.object as? NSPopover,
+              closingPopover === popover else { return }
+        closingPopover.delegate = nil
+        popover = nil
+        popoverDeviceID = nil
+        if manager.connectionStatus != .disconnected {
+            manager.disconnect()
         }
     }
 }
