@@ -923,6 +923,7 @@ private final class DPadSwipeCaptureView: NSView {
 
 struct DPadView: View {
     @Environment(AppleTVManager.self) private var manager
+    @Environment(RemoteKeyboardHighlightState.self) private var keyboardHighlight
     let onPress: (CompanionButton, InputAction) -> Void
     let size: CGFloat
     @State private var blinkOpacity: Double = 0
@@ -951,8 +952,7 @@ struct DPadView: View {
                 .frame(width: size * 0.5, height: size * 0.5)
                 .remoteControlSurface(
                     color: DS.Colors.remoteButtonCenter,
-                    in: Circle(),
-                    usesGlass: false
+                    in: Circle()
                 )
                 .overlay(
                     RemoteButtonGesture(
@@ -1006,10 +1006,15 @@ struct DPadView: View {
             .padding(.horizontal, 12)
 
             Circle()
-                .fill(.white.opacity(isPressed ? 0.12 : blinkOpacity))
+                .fill(.white.opacity(
+                    isPressed || keyboardHighlight.heldButtons.contains(where: Self.dpadButtons.contains)
+                        ? 0.12
+                        : blinkOpacity
+                ))
                 .frame(width: size, height: size)
                 .allowsHitTesting(false)
                 .animation(.easeOut(duration: 0.12), value: isPressed)
+                .animation(.easeOut(duration: 0.12), value: keyboardHighlight.heldButtons)
         }
         // Swipe over the pad (trackpad / Magic Mouse) streams as a touch,
         // matching iOS. Hit testing stays off so button clicks pass through.
@@ -1047,6 +1052,7 @@ struct DPadDot: View {
 
 struct RemoteCircleButton: View {
     @Environment(AppleTVManager.self) private var manager
+    @Environment(RemoteKeyboardHighlightState.self) private var keyboardHighlight
     let symbolName: String
     let accessibilityLabel: String
     let button: CompanionButton
@@ -1073,7 +1079,9 @@ struct RemoteCircleButton: View {
             .frame(width: size * 0.33, height: size * 0.33)
             .frame(width: size, height: size)
             .remoteControlSurface(color: DS.Colors.remoteButton, in: Circle())
-            .overlay(Circle().fill(.white.opacity(isPressed ? 0.12 : blinkOpacity)).allowsHitTesting(false))
+            .overlay(Circle().fill(.white.opacity(
+                isPressed || keyboardHighlight.heldButtons.contains(button) ? 0.12 : blinkOpacity
+            )).allowsHitTesting(false))
             .overlay(
                 RemoteButtonGesture(
                     onInput: { input in press(input) },
@@ -1081,6 +1089,7 @@ struct RemoteCircleButton: View {
                 )
             )
             .animation(.easeOut(duration: 0.12), value: isPressed)
+            .animation(.easeOut(duration: 0.12), value: keyboardHighlight.heldButtons)
             .help(shortcut)
             .accessibilityElement()
             .accessibilityLabel(Text(accessibilityLabel))
@@ -1092,6 +1101,7 @@ struct RemoteCircleButton: View {
 
 struct VolumePill: View {
     @Environment(AppleTVManager.self) private var manager
+    @Environment(RemoteKeyboardHighlightState.self) private var keyboardHighlight
     let width: CGFloat
     let height: CGFloat
     let onUp: () -> Void
@@ -1129,7 +1139,13 @@ struct VolumePill: View {
         }
         .frame(width: width, height: height)
         .remoteControlSurface(color: DS.Colors.remoteButton, in: Capsule())
-        .overlay(Capsule().fill(.white.opacity(blinkOpacity)).allowsHitTesting(false))
+        .overlay(Capsule().fill(.white.opacity(
+            keyboardHighlight.heldButtons.contains(.volumeUp)
+                || keyboardHighlight.heldButtons.contains(.volumeDown)
+                ? 0.12
+                : blinkOpacity
+        )).allowsHitTesting(false))
+        .animation(.easeOut(duration: 0.12), value: keyboardHighlight.heldButtons)
         .clipShape(Capsule())
         .onChange(of: manager.keyboardBlinkCounter) { _, _ in
             if manager.keyboardBlinkButton == .volumeUp || manager.keyboardBlinkButton == .volumeDown {

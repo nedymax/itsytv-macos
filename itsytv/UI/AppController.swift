@@ -1,11 +1,52 @@
 import AppKit
 import SwiftUI
 import Combine
+import Observation
 import ServiceManagement
 import os.log
 import ItsytvCore
 
 private let log = Logger(subsystem: "com.itsytv.app", category: "Panel")
+
+enum RemoteKeyboardMapping {
+    static func button(for keyCode: UInt16) -> CompanionButton? {
+        switch keyCode {
+        case 126: .up
+        case 125: .down
+        case 123: .left
+        case 124: .right
+        case 36:  .select
+        case 51:  .home
+        case 53:  .menu
+        case 49:  .playPause
+        case 24:  .volumeUp
+        case 27:  .volumeDown
+        default:  nil
+        }
+    }
+}
+
+@MainActor
+@Observable
+final class RemoteKeyboardHighlightState {
+    private(set) var heldButtons: [CompanionButton] = []
+
+    func press(_ button: CompanionButton) {
+        guard !heldButtons.contains(button) else { return }
+        heldButtons.append(button)
+    }
+
+    @discardableResult
+    func release(_ button: CompanionButton) -> Bool {
+        let wasHeld = heldButtons.contains(button)
+        heldButtons.removeAll { $0 == button }
+        return wasHeld
+    }
+
+    func reset() {
+        heldButtons.removeAll()
+    }
+}
 
 @MainActor
 final class AppController: NSObject, NSMenuDelegate {
@@ -14,6 +55,7 @@ final class AppController: NSObject, NSMenuDelegate {
     let menu = NSMenu()
     private let manager: AppleTVManager
     private let iconLoader: AppIconLoader
+    private let keyboardHighlight = RemoteKeyboardHighlightState()
     private var observation: AnyCancellable?
     private var panel: NSPanel?
     private var panelDeviceID: String?
@@ -388,6 +430,7 @@ final class AppController: NSObject, NSMenuDelegate {
         }
             .environment(manager)
             .environment(iconLoader)
+            .environment(keyboardHighlight)
 
         let hostingView = NSHostingView(rootView: panelContent)
         hostingView.safeAreaRegions = []
@@ -606,7 +649,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
     private func installKeyboardMonitor() {
         removeKeyboardMonitor()
-        keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
             guard let self, let panel = self.panel,
                   PanelKeyboardRouting.shouldHandle(
                     panelIsVisible: panel.isVisible,
@@ -614,7 +657,11 @@ final class AppController: NSObject, NSMenuDelegate {
                     panelIsApplicationKeyWindow: NSApp.keyWindow === panel,
                     eventTargetsPanel: event.window === panel
                   ) else { return event }
-            if self.handleRemoteKeyDown(event) { return nil }
+            if event.type == .keyUp {
+                if self.handleRemoteKeyUp(event) { return nil }
+            } else if self.handleRemoteKeyDown(event) {
+                return nil
+            }
             return event
         }
     }
@@ -624,6 +671,7 @@ final class AppController: NSObject, NSMenuDelegate {
             NSEvent.removeMonitor(monitor)
             keyboardMonitor = nil
         }
+        keyboardHighlight.reset()
     }
 
     private func handleRemoteKeyDown(_ event: NSEvent) -> Bool {
@@ -664,23 +712,19 @@ final class AppController: NSObject, NSMenuDelegate {
             }
         }
 
-        let button: CompanionButton? = switch event.keyCode {
-        case 126: .up
-        case 125: .down
-        case 123: .left
-        case 124: .right
-        case 36:  .select
-        case 51:  .home
-        case 53:  .menu
-        case 49:  .playPause
-        case 24:  .volumeUp
-        case 27:  .volumeDown
-        default:  nil
-        }
+        let button = RemoteKeyboardMapping.button(for: event.keyCode)
         guard let button else { return false }
+        keyboardHighlight.press(button)
         manager.pressButton(button)
-        manager.triggerKeyboardBlink(button)
+        if !event.isARepeat {
+            manager.triggerKeyboardBlink(button)
+        }
         return true
+    }
+
+    private func handleRemoteKeyUp(_ event: NSEvent) -> Bool {
+        guard let button = RemoteKeyboardMapping.button(for: event.keyCode) else { return false }
+        return keyboardHighlight.release(button)
     }
 
     // MARK: - NSMenuDelegate

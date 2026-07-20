@@ -56,4 +56,21 @@ final class PanelKeyboardRoutingTests: XCTestCase {
             eventTargetsPanel: false
         ))
     }
+
+    func testRemoteKeyCodesMapToExpectedButtons() {
+        XCTAssertEqual(RemoteKeyboardMapping.button(for: 53), .menu)
+        XCTAssertEqual(RemoteKeyboardMapping.button(for: 49), .playPause)
+        XCTAssertEqual(RemoteKeyboardMapping.button(for: 24), .volumeUp)
+        XCTAssertNil(RemoteKeyboardMapping.button(for: 0))
+    }
+
+    @MainActor
+    func testHeldKeyHighlightPersistsUntilReleaseWithoutDuplicates() {
+        let highlight = RemoteKeyboardHighlightState()
+        highlight.press(.menu)
+        highlight.press(.menu)
+        XCTAssertEqual(highlight.heldButtons, [.menu])
+        XCTAssertTrue(highlight.release(.menu))
+        XCTAssertTrue(highlight.heldButtons.isEmpty)
+    }
 }

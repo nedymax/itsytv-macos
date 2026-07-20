@@ -56,7 +56,7 @@ enum DS {
         static var remoteButtonCenter: NSColor {
             NSColor(name: nil) { appearance in
                 if appearance.isDark {
-                    return NSColor(white: 30.0 / 255.0, alpha: 1)
+                    return NSColor(white: 65.0 / 255.0, alpha: 1)
                 }
                 return NSColor(white: 0.205, alpha: 1)
             }
@@ -196,28 +196,19 @@ extension View {
         modifier(NativePanelControlStyle())
     }
 
-    func remoteControlSurface<S: Shape>(
-        color: NSColor,
-        in shape: S,
-        usesGlass: Bool = true
-    ) -> some View {
-        modifier(RemoteControlSurfaceModifier(
-            color: Color(nsColor: color),
-            shape: shape,
-            usesGlass: usesGlass
-        ))
+    func remoteControlSurface<S: Shape>(color: NSColor, in shape: S) -> some View {
+        modifier(RemoteControlSurfaceModifier(color: Color(nsColor: color), shape: shape))
     }
 }
 
 private struct RemoteControlSurfaceModifier<S: Shape>: ViewModifier {
     let color: Color
     let shape: S
-    let usesGlass: Bool
 
     @ViewBuilder
     func body(content: Content) -> some View {
         #if compiler(>=6.2)
-        if #available(macOS 26.0, *), usesGlass {
+        if #available(macOS 26.0, *) {
             content.glassEffect(.regular.tint(color).interactive(), in: shape)
         } else {
             content
