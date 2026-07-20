@@ -416,31 +416,30 @@ final class AppController: NSObject, NSMenuDelegate {
         panel.backgroundColor = .clear
         panel.isReleasedWhenClosed = false
         panel.delegate = self
-        panel.animationBehavior = .none
-        panel.alphaValue = 0
+        panel.animationBehavior = .utilityWindow
         // Match system popovers: retain AppKit's soft window shadow. The glass
         // surface itself supplies the rounded edge treatment.
         panel.hasShadow = true
 
-        panel.makeKeyAndOrderFront(nil)
-
-        // Position after makeKeyAndOrderFront — AppKit constrains the
-        // frame during ordering for .statusBar level panels, so we must
-        // set the origin after the window is on screen.
-        if let origin = PanelPositioning.resolvedOrigin(
+        let resolvedOrigin = PanelPositioning.resolvedOrigin(
             savedOrigin: savedPanelOrigin(panelHeight: panel.frame.height),
             panelSize: panel.frame.size,
             visibleFrames: NSScreen.screens.map(\.visibleFrame),
             statusItemFrame: statusItem.button?.window?.frame
-        ) {
+        )
+        if let origin = resolvedOrigin {
             panel.setFrameOrigin(origin)
         }
 
-        // Let AppKit establish the glass backdrop, final frame, and rounded
-        // shadow before exposing the window. Fading while NSGlassEffectView is
-        // performing its first composition produces a bright transient frame.
         panel.contentView?.layoutSubtreeIfNeeded()
         panel.contentView?.displayIfNeeded()
+        panel.makeKeyAndOrderFront(nil)
+
+        // AppKit may constrain status-bar-level windows while ordering them.
+        // Reassert the resolved origin before refreshing the rounded shadow.
+        if let origin = resolvedOrigin {
+            panel.setFrameOrigin(origin)
+        }
         panel.invalidateShadow()
 
         // Do not assign initial keyboard focus to the first SwiftUI control.
@@ -452,24 +451,6 @@ final class AppController: NSObject, NSMenuDelegate {
         self.panel = panel
         self.panelDeviceID = manager.connectedDeviceID
         installKeyboardMonitor()
-
-        DispatchQueue.main.async { [weak self, weak panel] in
-            guard let self, let panel, self.panel === panel else { return }
-            panel.contentView?.layoutSubtreeIfNeeded()
-            panel.contentView?.displayIfNeeded()
-            panel.invalidateShadow()
-
-            let fadeDuration = self.panelFadeDuration
-            if fadeDuration == 0 {
-                panel.alphaValue = 1
-            } else {
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = fadeDuration
-                    context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                    panel.animator().alphaValue = 1
-                }
-            }
-        }
 
         // Observe "Always on top" toggle changes while panel is open
         alwaysOnTopObserver = NotificationCenter.default.addObserver(
@@ -573,6 +554,7 @@ final class AppController: NSObject, NSMenuDelegate {
 
         // Hide the complete composited window before changing connection state;
         // otherwise SwiftUI redraws the glass while it is still fading onscreen.
+        panel.animationBehavior = .none
         panel.orderOut(nil)
         panel.delegate = nil
         panel.close()
